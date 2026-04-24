@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:prices": "npx tsx tests/price_accuracy.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
