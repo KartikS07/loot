@@ -217,9 +217,24 @@ export default function SavingsPage() {
     .filter(d => !d.confirmedPurchase && !d._dismissed)
     .slice(0, 3);
 
+  // URL is appended separately — never include it in the text body
+  // to prevent WhatsApp showing it twice (once in text, once as hyperlink)
   const buildShareText = useCallback((suffix = "") =>
-    `I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯${suffix}\n\nNot just a deal. A loot.\n\nloot-eta.vercel.app`,
+    `I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯${suffix}\n\nNot just a deal. A loot.`,
   [savings.totalDealsFound]);
+
+  // Build a personalized share URL that generates a custom OG image with user's data
+  // e.g. loot-eta.vercel.app/share?savings=7249&loots=2&name=Kartik&persona=value_hunter
+  const buildPersonalizedUrl = useCallback(() => {
+    const base = "https://loot-eta.vercel.app/share";
+    const params = new URLSearchParams();
+    if (savings.totalDealsFound) params.set("savings", String(savings.totalDealsFound));
+    if (savings.dealsCount) params.set("loots", String(savings.dealsCount));
+    if (name) params.set("name", name);
+    if (persona) params.set("persona", persona);
+    if (savings.bestDeal) params.set("best", `₹${savings.bestDeal.saved.toLocaleString("en-IN")} on ${savings.bestDeal.productName.split(" ").slice(0, 3).join(" ")}`);
+    return `${base}?${params.toString()}`;
+  }, [savings, name, persona]);
 
   const shareText = (suffix: string) => encodeURIComponent(buildShareText(suffix));
 
@@ -261,12 +276,15 @@ export default function SavingsPage() {
       return;
     }
     if (platform === "linkedin") {
-      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(siteUrl)}`, "_blank");
+      const shareUrl = buildPersonalizedUrl();
+      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, "_blank");
       return;
     }
     if (platform === "whatsapp") {
-      // WhatsApp reads og:image from the URL and shows it as a rich preview
-      const waText = `${text}\n\n${siteUrl}`;
+      // Build personalized share URL — WhatsApp fetches its og:image which shows
+      // the user's actual Loot Report card (their savings, name, persona)
+      const shareUrl = buildPersonalizedUrl();
+      const waText = `${text}\n\n${shareUrl}`;
       window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, "_blank");
       return;
     }
@@ -274,8 +292,9 @@ export default function SavingsPage() {
     // Main "Share my Loot Report" button — try native share sheet first (mobile)
     setSharing(true);
     try {
+      const shareUrl = buildPersonalizedUrl();
       if (navigator.share) {
-        await navigator.share({ title: "My Loot Report", text, url: siteUrl });
+        await navigator.share({ title: "My Loot Report", text, url: shareUrl });
         return;
       }
       // Desktop fallback: copy link + offer download
