@@ -29,6 +29,33 @@ function extractJson(text: string): string {
   return text.slice(start, end + 1);
 }
 
+// Gemini sometimes returns {} instead of null for optional fields. Fix recursively.
+// Also validates that effectivePrice <= listedPrice (catches hallucinated discounts).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sanitize(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(sanitize);
+  if (obj !== null && typeof obj === "object") {
+    if (Object.keys(obj).length === 0) return null; // {} → null
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = sanitize(v);
+    }
+    // Validate price logic: effectivePrice should never be dramatically lower than listedPrice
+    if (out.listedPrice && out.effectivePrice) {
+      const listed = parseInt(String(out.listedPrice).replace(/[^0-9]/g, ""));
+      const effective = parseInt(String(out.effectivePrice).replace(/[^0-9]/g, ""));
+      // If effective is less than 50% of listed, something is wrong — trust listedPrice
+      if (listed > 0 && effective < listed * 0.5) {
+        out.effectivePrice = out.listedPrice;
+        out.savings = "₹0";
+        out.discountApplied = "Discount data unavailable";
+      }
+    }
+    return out;
+  }
+  return obj;
+}
+
 const PRICE_SYSTEM_PROMPT = `You are Loot's Price Optimizer — India's sharpest price intelligence agent. Your job: find the real effective price of a product across all major Indian platforms after applying the user's bank card and UPI discounts.
 
 Use your search capability to find current prices on Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales, Blinkit, and the brand's official India website.
@@ -123,7 +150,7 @@ Return ONLY the JSON object.`;
     console.log("[price] Raw response preview:", rawText.slice(0, 200));
 
     const jsonStr = extractJson(rawText);
-    const parsed = JSON.parse(jsonStr);
+    const parsed = sanitize(JSON.parse(jsonStr));
 
     logStep({
       sessionId, agentName: "price_optimizer", step: "complete",
