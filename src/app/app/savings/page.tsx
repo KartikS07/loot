@@ -274,12 +274,21 @@ export default function SavingsPage() {
     const text = buildShareText("\n\nI never overpay anymore.");
 
     if (platform === "x") {
-      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
+      // X supports ?text= for the message AND ?url= as a separate card (not in char count)
+      // X will show the og:image from the /share URL as a card preview
+      const shareUrl = buildPersonalizedUrl();
+      const xUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
+      window.open(xUrl, "_blank");
       return;
     }
     if (platform === "linkedin") {
+      // LinkedIn share-offsite only accepts url, can't pre-fill text.
+      // Copy text to clipboard first so user can paste it — same spirit as WhatsApp.
       const shareUrl = buildPersonalizedUrl();
+      const linkedInText = `${text}\n\n${shareUrl}`;
+      await navigator.clipboard.writeText(linkedInText).catch(() => {});
       window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, "_blank");
+      showToast("Text copied — paste it into your LinkedIn post ✓");
       return;
     }
     if (platform === "whatsapp") {
