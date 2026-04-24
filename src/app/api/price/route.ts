@@ -95,8 +95,7 @@ function sanitize(obj: any): any {
 interface RainforestResult {
   price: string;
   title: string;
-  link: string;
-  rating?: string;
+  directLink: string;  // amazon.in/dp/{ASIN} — direct product page, no search
   inStock: boolean;
 }
 
@@ -160,11 +159,16 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
     const priceStr = priceVal ? `₹${Math.round(Number(priceVal)).toLocaleString("en-IN")}` : null;
     if (!priceStr) return null;
 
+    // Build direct product URL using ASIN — goes straight to product page, no search
+    const asin = match.asin ?? (match.price as Record<string, unknown>)?.asin;
+    const directLink = asin
+      ? `https://www.amazon.in/dp/${asin}`
+      : `https://www.amazon.in/s?k=${encodeURIComponent(product)}`;
+
     return {
       price: priceStr,
       title: String(match.title ?? product),
-      link: String(match.link ?? `https://www.amazon.in/s?k=${encodeURIComponent(product)}`),
-      rating: match.rating ? String(match.rating) : undefined,
+      directLink,
       inStock: match.availability?.type !== "out_of_stock",
     };
   } catch (err) {
@@ -209,11 +213,12 @@ CRITICAL: Report the CURRENT SELLING PRICE (what a buyer pays today), NOT the MR
 
 For each platform found, report:
 1. Current selling price in rupees (the actual checkout price)
-2. In stock status (true unless page explicitly says out of stock)
-3. Any bank card discount for: ${cards}
-4. Any UPI cashback for: ${upi}
-5. Delivery time
-6. Return policy
+2. The FULL direct product page URL — e.g. flipkart.com/[slug]/p/[itemId] for Flipkart, amazon.in/dp/[ASIN] for Amazon. Include the complete URL in your response so it can be extracted.
+3. In stock status (true unless page explicitly says out of stock)
+4. Any bank card discount for: ${cards}
+5. Any UPI cashback for: ${upi}
+6. Delivery time
+7. Return policy
 
 Also report: all-time low price for this product, and Indian sale events expected in the next 30 days.
 Only report data you find from actual platform pages. Do not guess.`),
@@ -324,13 +329,35 @@ Rules:
 
     const parsed = sanitize(repairAndParseJson(jsonText));
 
+    // ── Extract direct platform URLs from Phase 1 prose ──
+    // Regex finds canonical product page URLs for all major platforms.
+    // These go straight to the product page — no search, no sponsored noise.
+    const directLinks: Record<string, string> = {};
+
+    // Amazon India: /dp/{10-char ASIN}
+    const amazonAsin = rawPriceData.match(/amazon\.in\/[^\s"'<)]+\/dp\/([A-Z0-9]{10})/);
+    if (amazonAsin) directLinks["Amazon India"] = `https://www.amazon.in/dp/${amazonAsin[1]}`;
+
+    // Rainforest ASIN overrides Phase 1 if available (more reliable)
+    if (amazonResult?.directLink) directLinks["Amazon India"] = amazonResult.directLink;
+
+    // Flipkart: /p/{itemId}
+    const flipkartUrl = rawPriceData.match(/https?:\/\/(?:www\.)?flipkart\.com\/[^\s"'<)]+\/p\/[a-z0-9]+/i);
+    if (flipkartUrl) directLinks["Flipkart"] = flipkartUrl[0].split(/[?#]/)[0];
+
+    // Croma: /p/{productId}
+    const cromaUrl = rawPriceData.match(/https?:\/\/(?:www\.)?croma\.com\/[^\s"'<)]+\/p\/\d+/i);
+    if (cromaUrl) directLinks["Croma"] = cromaUrl[0].split(/[?#]/)[0];
+
+    console.log("[price] Direct links found:", Object.keys(directLinks).join(", ") || "none");
+
     logStep({
       sessionId, agentName: "price_optimizer", step: "complete",
       output: jsonText.slice(0, 200), status: "complete",
       durationMs: Date.now() - startTime,
     });
 
-    return Response.json(parsed);
+    return Response.json({ ...parsed, directLinks });
   } catch (err) {
     console.error("[price] Error:", String(err).slice(0, 300));
     logStep({ sessionId, agentName: "price_optimizer", step: "error", output: String(err), durationMs: Date.now() - startTime, status: "error" });

@@ -33,6 +33,7 @@ interface PriceResult {
   priceContext: string;
   atl: string;
   upcomingSales: string[];
+  directLinks?: Record<string, string>; // platform name → direct product page URL
 }
 
 // Fallback search URLs when Gemini can't find the direct product page
@@ -47,19 +48,27 @@ const PLATFORM_SEARCH: Record<string, (q: string) => string> = {
   "Zepto": (q) => `https://www.zepto.com/search?query=${encodeURIComponent(q)}`,
 };
 
-function getPlatformUrl(platform: Platform, productName: string | null | undefined): string {
-  // Guard: never pass null/undefined to encodeURIComponent — falls back to platform name
-  const rawQuery = (typeof productName === "string" && productName.trim())
+function getPlatformUrl(
+  platform: Platform,
+  productName: string | null | undefined,
+  directLinks?: Record<string, string>
+): string {
+  // Priority 1: direct product page URL (from Rainforest ASIN or Phase 1 URL extraction)
+  // e.g. amazon.in/dp/B0BZP2H373 or flipkart.com/[slug]/p/itmb7d860129eb21
+  // Goes straight to the product — no search, no sponsored noise.
+  if (directLinks) {
+    const match = Object.keys(directLinks).find(k =>
+      platform.name.toLowerCase().includes(k.toLowerCase()) ||
+      k.toLowerCase().includes(platform.name.toLowerCase())
+    );
+    if (match) return directLinks[match];
+  }
+
+  // Priority 2: platform search using the original clean product name from URL param
+  const query = (typeof productName === "string" && productName.trim())
     ? productName
     : platform.name;
 
-  // Clean the query: Gemini sometimes returns full spec-laden titles (e.g.
-  // "Philips Air Purifier AC2220, CADR 420m³/h, Medium to Large room size...")
-  // which produces bad search results. Keep only the first 5 words — that's
-  // always brand + model/series, which is what platform search needs.
-  const query = rawQuery.split(/[\s,]+/).slice(0, 6).join(" ");
-
-  // productUrl removed from schema — skip this check
   const searchFn = Object.entries(PLATFORM_SEARCH).find(([key]) =>
     platform.name.toLowerCase().includes(key.toLowerCase())
   )?.[1];
@@ -260,8 +269,8 @@ function PricePage() {
                     p.name.toLowerCase().includes((result.verdict.bestPlatform ?? "").toLowerCase())
                   );
                   const buyUrl = bestPlatform
-                    ? getPlatformUrl(bestPlatform, product)
-                    : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, product);
+                    ? getPlatformUrl(bestPlatform, product, result.directLinks)
+                    : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, product, result.directLinks);
                   return buyUrl ? (
                     <a
                       href={buyUrl}
@@ -333,7 +342,7 @@ function PricePage() {
                       {p.sellerTrust && <span className="text-zinc-700">{p.sellerTrust}</span>}
                     </div>
                     <a
-                      href={getPlatformUrl(p, product)}
+                      href={getPlatformUrl(p, product, result.directLinks)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-all text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500"
