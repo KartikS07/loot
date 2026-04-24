@@ -223,69 +223,66 @@ export default function SavingsPage() {
 
   const shareText = (suffix: string) => encodeURIComponent(buildShareText(suffix));
 
-  // Capture the Loot Report card as a PNG image and share/download it
-  const captureAndShare = useCallback(async (platform?: "whatsapp" | "x" | "linkedin") => {
+  const [toastMsg, setToastMsg] = useState("");
+  function showToast(msg: string) {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(""), 3000);
+  }
+
+  // Download the Loot Report card as a PNG image (desktop use case)
+  const downloadCard = useCallback(async () => {
     setSharing(true);
     try {
       const cardEl = document.getElementById("loot-report-card");
       if (!cardEl) throw new Error("Card not found");
-
-      // Dynamically import html2canvas so it only loads when needed
       const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(cardEl, {
-        backgroundColor: "#0a0a0a",
-        scale: 2,        // retina quality
-        useCORS: true,
-        logging: false,
-      });
-
-      const blob = await new Promise<Blob>((resolve) =>
-        canvas.toBlob((b) => resolve(b!), "image/png", 0.95)
-      );
-      const imageFile = new File([blob], "loot-report.png", { type: "image/png" });
-      const text = buildShareText("\n\nI never overpay anymore.");
-
-      // Platform-specific: X and LinkedIn don't support file sharing via Web Share
-      if (platform === "x") {
-        window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
-        return;
-      }
-      if (platform === "linkedin") {
-        window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent("https://loot-eta.vercel.app")}`, "_blank");
-        return;
-      }
-
-      // WhatsApp + main button: try Web Share API with image (works on mobile)
-      const canShareImage = typeof navigator.share !== "undefined" &&
-        typeof navigator.canShare === "function" &&
-        navigator.canShare({ files: [imageFile] });
-
-      if (canShareImage) {
-        await navigator.share({ files: [imageFile], title: "My Loot Report", text });
-        return;
-      }
-
-      // Fallback 1: Web Share without image (desktop browsers)
-      if (navigator.share) {
-        await navigator.share({ title: "My Loot Report", text, url: "https://loot-eta.vercel.app" });
-        return;
-      }
-
-      // Fallback 2: download the image + copy text
+      const canvas = await html2canvas(cardEl, { backgroundColor: "#0a0a0a", scale: 2, useCORS: true, logging: false });
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png", 0.95));
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "loot-report.png";
       a.click();
       URL.revokeObjectURL(url);
-      await navigator.clipboard.writeText(text).catch(() => {});
-    } catch (e) {
-      if ((e as Error)?.name !== "AbortError") {
-        // User cancelled share — silent
-        const text = buildShareText("");
-        await navigator.clipboard.writeText(text).catch(() => {});
-        alert("Image downloaded! Text copied — paste it when sharing.");
+      showToast("Card downloaded! Attach it when sharing.");
+    } catch { showToast("Couldn't capture card. Try a screenshot."); }
+    finally { setSharing(false); }
+  }, []);
+
+  // Share: WhatsApp and X use text + URL — WhatsApp reads og:image from loot-eta.vercel.app
+  // and shows it as a rich link preview (same as how KukuFM, Spotify etc. work).
+  // No file attachment needed — the OG image IS the visual.
+  const captureAndShare = useCallback(async (platform?: "whatsapp" | "x" | "linkedin") => {
+    const siteUrl = "https://loot-eta.vercel.app";
+    const text = buildShareText("\n\nI never overpay anymore.");
+
+    if (platform === "x") {
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
+      return;
+    }
+    if (platform === "linkedin") {
+      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(siteUrl)}`, "_blank");
+      return;
+    }
+    if (platform === "whatsapp") {
+      // WhatsApp reads og:image from the URL and shows it as a rich preview
+      const waText = `${text}\n\n${siteUrl}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, "_blank");
+      return;
+    }
+
+    // Main "Share my Loot Report" button — try native share sheet first (mobile)
+    setSharing(true);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "My Loot Report", text, url: siteUrl });
+        return;
       }
+      // Desktop fallback: copy link + offer download
+      await navigator.clipboard.writeText(`${text}\n\n${siteUrl}`);
+      showToast("Link copied! Paste it in WhatsApp or anywhere.");
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") showToast("Link copied to clipboard.");
     } finally {
       setSharing(false);
     }
@@ -363,12 +360,18 @@ export default function SavingsPage() {
         />
 
         <div className="w-full max-w-xs space-y-3">
+          {/* Non-blocking toast */}
+          {toastMsg && (
+            <div className="text-center bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-zinc-300 text-xs animate-pulse">
+              {toastMsg}
+            </div>
+          )}
           <button
             onClick={() => captureAndShare()}
             disabled={sharing}
             className="w-full bg-amber-400 hover:bg-amber-300 text-black font-black rounded-2xl py-4 text-sm transition-colors disabled:opacity-60"
           >
-            {sharing ? "Capturing card..." : "Share my Loot Report →"}
+            {sharing ? "Opening share sheet..." : "Share my Loot Report →"}
           </button>
           <div className="grid grid-cols-3 gap-2">
             {/* WhatsApp — shares card image via Web Share API on mobile */}
@@ -406,6 +409,14 @@ export default function SavingsPage() {
               <span className="text-zinc-400 text-xs">LinkedIn</span>
             </button>
           </div>
+          {/* Download card as image — for attaching manually to X or desktop sharing */}
+          <button
+            onClick={downloadCard}
+            disabled={sharing}
+            className="w-full text-xs text-zinc-600 hover:text-zinc-400 transition-colors py-1"
+          >
+            {sharing ? "Capturing..." : "↓ Download card as image"}
+          </button>
         </div>
       </div>
 
