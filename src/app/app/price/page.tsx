@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 interface Platform {
@@ -40,11 +40,24 @@ function getProfile() {
   catch { return {}; }
 }
 
+// Safe price string — returns "—" instead of null/undefined/object
+function px(s: unknown): string {
+  if (typeof s === "string" && s.trim()) return s;
+  return "—";
+}
+
+// Parse ₹ price string to integer for sorting; unparseable = Infinity (goes last)
+function parsePx(s: unknown): number {
+  if (typeof s !== "string") return Infinity;
+  const n = parseInt(s.replace(/[^0-9]/g, ""));
+  return isNaN(n) ? Infinity : n;
+}
+
 const LOADING_MESSAGES = [
   "Scanning Amazon India...",
   "Checking Flipkart prices...",
   "Searching Croma & Reliance Digital...",
-  "Applying your HDFC card discount...",
+  "Applying your bank card discounts...",
   "Checking for active coupon codes...",
   "Analysing price history...",
   "Computing your best deal...",
@@ -54,44 +67,63 @@ function PricePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const product = searchParams.get("product") ?? "";
+
   const [result, setResult] = useState<PriceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [loadingMsg, setLoadingMsg] = useState(0);
 
-  useEffect(() => {
-    if (!product) return;
-    fetchPrices();
-  }, [product]);
+  // FIX 1: guard against React 18 StrictMode double-invocation
+  // AbortController cancels the in-flight request if the effect re-runs or component unmounts
+  const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (!loading) return;
-    const interval = setInterval(() => {
-      setLoadingMsg((i) => (i + 1) % LOADING_MESSAGES.length);
-    }, 2200);
-    return () => clearInterval(interval);
-  }, [loading]);
-
-  async function fetchPrices() {
+  const fetchPrices = useCallback(async (signal: AbortSignal) => {
     setLoading(true);
     setError("");
     setResult(null);
-    const profile = getProfile();
+    setLoadingMsg(0);
+
     try {
       const res = await fetch("/api/price", {
         method: "POST",
+        signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, userProfile: profile }),
+        body: JSON.stringify({ product, userProfile: getProfile() }),
       });
+
+      if (signal.aborted) return;
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (signal.aborted) return;
+
+      if (!res.ok) throw new Error(data.error ?? "Price check failed");
       setResult(data);
     } catch (e) {
-      setError(String(e));
+      if ((e as Error).name === "AbortError") return; // intentional cancel
+      setError((e as Error).message ?? "Something went wrong");
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
-  }
+  }, [product]);
+
+  useEffect(() => {
+    if (!product) return;
+
+    // Cancel any previous in-flight request before starting a new one
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetchPrices(controller.signal);
+
+    return () => controller.abort(); // cleanup on unmount or product change
+  }, [product, fetchPrices]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const id = setInterval(() => setLoadingMsg((i) => (i + 1) % LOADING_MESSAGES.length), 2200);
+    return () => clearInterval(id);
+  }, [loading]);
 
   if (!product) {
     return (
@@ -104,9 +136,13 @@ function PricePage() {
     );
   }
 
+  // FIX 3: safe sort — unparseable prices go last, no NaN comparisons
+  const sortedPlatforms = result
+    ? [...result.platforms].sort((a, b) => parsePx(a.effectivePrice) - parsePx(b.effectivePrice))
+    : [];
+
   return (
     <div className="max-w-3xl mx-auto">
-      {/* Header */}
       <div className="mb-8">
         <button onClick={() => router.push("/app/research")} className="text-zinc-600 hover:text-zinc-400 text-sm mb-4 block transition-colors">
           ← Back to research
@@ -115,7 +151,6 @@ function PricePage() {
         <p className="text-zinc-500 text-sm mt-1">Price comparison across Indian platforms</p>
       </div>
 
-      {/* Loading */}
       {loading && (
         <div className="space-y-6">
           <div className="bg-zinc-950 border border-zinc-900 rounded-2xl p-8 text-center">
@@ -124,7 +159,7 @@ function PricePage() {
                 <div key={i} className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
               ))}
             </div>
-            <p className="text-zinc-400 text-sm transition-all">{LOADING_MESSAGES[loadingMsg]}</p>
+            <p className="text-zinc-400 text-sm">{LOADING_MESSAGES[loadingMsg]}</p>
           </div>
           <div className="space-y-3">
             {[1, 2, 3, 4].map((i) => (
@@ -139,36 +174,44 @@ function PricePage() {
         </div>
       )}
 
-      {/* Error */}
       {error && !loading && (
         <div className="bg-red-400/10 border border-red-400/20 rounded-2xl p-6 text-center">
           <p className="text-red-400 text-sm mb-3">{error}</p>
-          <button onClick={fetchPrices} className="bg-amber-400 hover:bg-amber-300 text-black font-bold rounded-xl px-5 py-2 text-sm transition-colors">
+          <button
+            onClick={() => {
+              abortRef.current?.abort();
+              const c = new AbortController();
+              abortRef.current = c;
+              fetchPrices(c.signal);
+            }}
+            className="bg-amber-400 hover:bg-amber-300 text-black font-bold rounded-xl px-5 py-2 text-sm transition-colors"
+          >
             Try again
           </button>
         </div>
       )}
 
-      {/* Results */}
       {result && !loading && (
         <div className="space-y-6">
-
-          {/* Verdict — the most important part */}
-          <div className={`rounded-2xl p-6 border ${result.verdict.action === "buy_now"
-            ? "bg-green-400/5 border-green-400/25"
-            : "bg-amber-400/5 border-amber-400/25"
+          {/* Verdict */}
+          <div className={`rounded-2xl p-6 border ${
+            result.verdict.action === "buy_now" ? "bg-green-400/5 border-green-400/25" : "bg-amber-400/5 border-amber-400/25"
           }`}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className={`text-xs font-semibold uppercase tracking-widest mb-2 ${result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"}`}>
+                <div className={`text-xs font-semibold uppercase tracking-widest mb-2 ${
+                  result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"
+                }`}>
                   {result.verdict.action === "buy_now" ? "✓ Buy now" : "⏳ Wait"}
                 </div>
                 <div className="text-white font-black text-2xl mb-1">
-                  {result.verdict.bestEffectivePrice}
-                  <span className="text-zinc-500 font-normal text-base ml-2">on {result.verdict.bestPlatform}</span>
+                  {px(result.verdict.bestEffectivePrice)}
+                  <span className="text-zinc-500 font-normal text-base ml-2">on {px(result.verdict.bestPlatform)}</span>
                 </div>
-                <div className={`text-sm font-medium mb-3 ${result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"}`}>
-                  {result.verdict.savings}
+                <div className={`text-sm font-medium mb-3 ${
+                  result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"
+                }`}>
+                  {px(result.verdict.savings)}
                 </div>
                 <p className="text-zinc-400 text-sm leading-relaxed">{result.verdict.reason}</p>
                 {result.verdict.action === "wait" && result.verdict.waitUntil && (
@@ -190,62 +233,55 @@ function PricePage() {
               Price comparison — sorted by effective price
             </div>
             <div className="space-y-3">
-              {result.platforms
-                .sort((a, b) => {
-                  const pa = parseInt(a.effectivePrice.replace(/[^0-9]/g, ""));
-                  const pb = parseInt(b.effectivePrice.replace(/[^0-9]/g, ""));
-                  return pa - pb;
-                })
-                .map((p, i) => (
-                  <div
-                    key={p.name}
-                    className={`bg-zinc-950 rounded-2xl p-5 border transition-all ${
-                      i === 0 && p.inStock ? "border-green-400/25" : "border-zinc-900"
-                    } ${!p.inStock ? "opacity-50" : ""}`}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          {i === 0 && p.inStock && (
-                            <span className="text-[10px] bg-green-400/15 text-green-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
-                              Best deal
-                            </span>
-                          )}
-                          <span className="text-white font-bold text-sm">{p.name}</span>
-                          {!p.inStock && (
-                            <span className="text-[10px] bg-red-400/15 text-red-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
-                              Out of stock
-                            </span>
-                          )}
-                        </div>
+              {sortedPlatforms.map((p, i) => (
+                <div
+                  key={`${p.name}-${i}`}
+                  className={`bg-zinc-950 rounded-2xl p-5 border transition-all ${
+                    i === 0 && p.inStock ? "border-green-400/25" : "border-zinc-900"
+                  } ${!p.inStock ? "opacity-50" : ""}`}
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      {i === 0 && p.inStock && (
+                        <span className="text-[10px] bg-green-400/15 text-green-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                          Best deal
+                        </span>
+                      )}
+                      <span className="text-white font-bold text-sm">{p.name}</span>
+                      {!p.inStock && (
+                        <span className="text-[10px] bg-red-400/15 text-red-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                          Out of stock
+                        </span>
+                      )}
+                    </div>
 
-                        <div className="flex items-baseline gap-2 mb-2">
-                          <span className="text-white font-black text-xl">{p.effectivePrice}</span>
-                          {p.listedPrice !== p.effectivePrice && (
-                            <span className="text-zinc-600 text-sm line-through">{p.listedPrice}</span>
-                          )}
-                          {p.savings && p.savings !== "₹0" && (
-                            <span className="text-green-400 text-xs font-semibold">{p.savings} off</span>
-                          )}
-                        </div>
+                    <div className="flex items-baseline gap-2 mb-2">
+                      {/* FIX 3: px() ensures we never render null/undefined/object */}
+                      <span className="text-white font-black text-xl">{px(p.effectivePrice)}</span>
+                      {p.listedPrice !== p.effectivePrice && (
+                        <span className="text-zinc-600 text-sm line-through">{px(p.listedPrice)}</span>
+                      )}
+                      {p.savings && p.savings !== "₹0" && p.savings !== "₹0,000" && (
+                        <span className="text-green-400 text-xs font-semibold">{px(p.savings)} off</span>
+                      )}
+                    </div>
 
-                        <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
-                          {p.discountApplied && p.discountApplied !== "none" && (
-                            <span className="text-blue-400">{p.discountApplied}</span>
-                          )}
-                          {p.couponCode && (
-                            <span className="font-mono bg-zinc-900 px-2 py-0.5 rounded text-amber-400">
-                              {p.couponCode}
-                            </span>
-                          )}
-                          <span>📦 {p.deliveryEta}</span>
-                          <span>↩ {p.returnPolicy}</span>
-                          <span className="text-zinc-700">{p.sellerTrust}</span>
-                        </div>
-                      </div>
+                    <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
+                      {p.discountApplied && p.discountApplied !== "none" && p.discountApplied !== "No applicable discounts found" && (
+                        <span className="text-blue-400">{p.discountApplied}</span>
+                      )}
+                      {p.couponCode && typeof p.couponCode === "string" && (
+                        <span className="font-mono bg-zinc-900 px-2 py-0.5 rounded text-amber-400">
+                          {p.couponCode}
+                        </span>
+                      )}
+                      {p.deliveryEta && <span>📦 {p.deliveryEta}</span>}
+                      {p.returnPolicy && <span>↩ {p.returnPolicy}</span>}
+                      {p.sellerTrust && <span className="text-zinc-700">{p.sellerTrust}</span>}
                     </div>
                   </div>
-                ))}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -255,14 +291,14 @@ function PricePage() {
             <p className="text-zinc-400 text-sm">{result.priceContext}</p>
             <div className="flex items-center gap-2 text-xs">
               <span className="text-zinc-600">All-time low:</span>
-              <span className="text-amber-400 font-medium">{result.atl}</span>
+              <span className="text-amber-400 font-medium">{px(result.atl)}</span>
             </div>
             {result.upcomingSales?.length > 0 && (
               <div>
                 <div className="text-zinc-600 text-xs mb-2">Upcoming sales</div>
                 <div className="flex flex-wrap gap-2">
-                  {result.upcomingSales.map((s) => (
-                    <span key={s} className="text-xs bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-full text-zinc-400">
+                  {result.upcomingSales.map((s, i) => (
+                    <span key={i} className="text-xs bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-full text-zinc-400">
                       {s}
                     </span>
                   ))}
@@ -271,7 +307,6 @@ function PricePage() {
             )}
           </div>
 
-          {/* Actions */}
           <div className="flex gap-3">
             <button
               onClick={() => router.push("/app/research")}

@@ -30,6 +30,19 @@ async function logStep(params: {
   }
 }
 
+// Shared sanitiser — converts {} → null recursively (Gemini sometimes returns empty objects for optional fields)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sanitize(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(sanitize);
+  if (obj !== null && typeof obj === "object") {
+    if (Object.keys(obj).length === 0) return null;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = sanitize(v);
+    return out;
+  }
+  return obj;
+}
+
 const SYSTEM_PROMPT = `You are Loot's AI Researcher — a sharp, opinionated shopping advisor for Indian consumers. Your job: take a shopping query and return a personalised top-5 shortlist that saves the user hours of research.
 
 You MUST respond with ONLY a valid JSON object. No markdown. No explanation. No text outside the JSON.
@@ -126,7 +139,7 @@ Weight recommendations, pros/cons, and education depth to this profile.`;
 
     console.log("[research] Gemini response preview:", text.slice(0, 150));
 
-    const parsed = JSON.parse(text);
+    const parsed = sanitize(JSON.parse(text));
 
     logStep({
       sessionId,
