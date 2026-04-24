@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
+import { saveToWishlist } from "@/app/app/wishlist/page";
 
 interface Platform {
   name: string;
@@ -160,6 +161,7 @@ function PricePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [loadingMsg, setLoadingMsg] = useState(0);
+  const [wishlisted, setWishlisted] = useState(false);
 
   // FIX 1: guard against React 18 StrictMode double-invocation
   // AbortController cancels the in-flight request if the effect re-runs or component unmounts
@@ -451,13 +453,27 @@ function PricePage() {
               onClick={() => router.push("/app/research")}
               className="flex-1 border border-zinc-800 hover:border-zinc-700 text-zinc-400 font-medium rounded-xl py-3 text-sm transition-colors"
             >
-              ← Research another product
+              ← Research another
+            </button>
+            <button
+              onClick={() => {
+                const bestPrice = result ? parsePx(result.verdict.bestEffectivePrice) : 0;
+                const saved = saveToWishlist({ productName: product, platform: result?.verdict.bestPlatform, bestPrice });
+                if (saved) setWishlisted(true);
+              }}
+              className={`border rounded-xl px-4 py-3 text-sm font-medium transition-all ${
+                wishlisted
+                  ? "border-amber-400/40 text-amber-400 bg-amber-400/10"
+                  : "border-zinc-800 hover:border-zinc-700 text-zinc-400"
+              }`}
+            >
+              {wishlisted ? "♥ Saved" : "♡ Save"}
             </button>
             <button
               onClick={() => router.push("/app/savings")}
-              className="border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 font-medium rounded-xl px-5 py-3 text-sm transition-colors"
+              className="border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 font-medium rounded-xl px-4 py-3 text-sm transition-colors"
             >
-              View savings →
+              Savings →
             </button>
           </div>
         </div>

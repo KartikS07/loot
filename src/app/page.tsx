@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { joinWaitlist } from "./actions";
 
 const PLATFORMS = ["Amazon", "Flipkart", "Croma", "Blinkit", "Zepto", "Meesho", "JioMart", "Vijay Sales", "Reliance Digital", "Tata Cliq", "Swiggy Instamart", "Brand Sites"];
@@ -31,9 +31,17 @@ function WaitlistForm({ source }: { source: string }) {
 
   if (status === "success") {
     return (
-      <div className="bg-amber-400/10 border border-amber-400/30 rounded-2xl px-6 py-4">
-        <div className="text-amber-400 font-semibold mb-0.5">You&apos;re on the list ✓</div>
-        <div className="text-zinc-400 text-sm">{message}</div>
+      <div className="space-y-3">
+        <div className="bg-amber-400/10 border border-amber-400/30 rounded-2xl px-6 py-4">
+          <div className="text-amber-400 font-semibold mb-0.5">You&apos;re on the list ✓</div>
+          <div className="text-zinc-400 text-sm">{message}</div>
+        </div>
+        <a
+          href="/app"
+          className="flex items-center justify-center gap-2 w-full bg-amber-400 hover:bg-amber-300 text-black font-black rounded-xl px-6 py-3.5 text-sm transition-colors"
+        >
+          Try Loot now — it&apos;s free →
+        </a>
       </div>
     );
   }
@@ -64,6 +72,14 @@ function WaitlistForm({ source }: { source: string }) {
 }
 
 export default function LandingPage() {
+  const [isReturning, setIsReturning] = useState(false);
+
+  useEffect(() => {
+    // Detect returning user — has a saved profile from a previous session
+    const profile = localStorage.getItem("loot_profile");
+    if (profile) setIsReturning(true);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#050505] text-white">
 
@@ -73,9 +89,18 @@ export default function LandingPage() {
           <span className="text-2xl font-black tracking-tight text-amber-400">Loot</span>
           <span className="text-[10px] text-zinc-600 font-semibold uppercase tracking-widest mt-1.5">beta</span>
         </div>
-        <a href="#waitlist" className="text-sm font-medium text-zinc-400 hover:text-amber-400 transition-colors">
-          Get early access →
-        </a>
+        {isReturning ? (
+          <a
+            href="/app"
+            className="bg-amber-400 hover:bg-amber-300 text-black font-bold text-sm rounded-xl px-4 py-2 transition-colors"
+          >
+            Open Loot →
+          </a>
+        ) : (
+          <a href="#waitlist" className="text-sm font-medium text-zinc-400 hover:text-amber-400 transition-colors">
+            Get early access →
+          </a>
+        )}
       </nav>
 
       {/* Hero */}
@@ -108,6 +133,12 @@ export default function LandingPage() {
 
           <div id="waitlist" className="max-w-md">
             <WaitlistForm source="hero" />
+            <p className="text-zinc-700 text-xs mt-4">
+              Already signed up?{" "}
+              <a href="/app" className="text-amber-400/70 hover:text-amber-400 transition-colors underline underline-offset-2">
+                Open Loot →
+              </a>
+            </p>
           </div>
         </div>
       </section>
