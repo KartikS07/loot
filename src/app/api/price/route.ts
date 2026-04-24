@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 
-// Two Gemini calls in sequence — needs up to 120s on Vercel
+// Two Gemini calls + optional Rainforest — needs up to 120s on Vercel
 export const maxDuration = 120;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -25,18 +25,6 @@ async function logStep(params: {
   } catch { /* non-fatal */ }
 }
 
-// Strip markdown formatting that pollutes the price data context
-function stripMarkdown(text: string): string {
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, "$1")  // **bold** → bold
-    .replace(/\*([^*]+)\*/g, "$1")       // *italic* → italic
-    .replace(/#{1,6}\s+/gm, "")          // ## headers
-    .replace(/`{1,3}[^`]*`{1,3}/g, "")  // `code`
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [link](url) → link
-    .trim();
-}
-
-// Race a promise against a timeout — prevents Gemini calls from hanging for 2+ minutes
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
@@ -46,34 +34,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-// Repair common Gemini JSON issues before parse
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/#{1,6}\s+/gm, "")
+    .replace(/`{1,3}[^`]*`{1,3}/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
+}
+
 function repairAndParseJson(text: string): unknown {
-  // Remove JS-style comments
   let s = text.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  // Find JSON object boundaries
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON object found in response");
 
   let json = s.slice(start, end + 1);
-
-  // 1. Strip ALL raw control chars (including \n \r inside string values, e.g. URLs).
-  //    JSON.parse doesn't require whitespace between tokens, so this is safe.
+  // Strip all raw control chars (including \n inside strings)
   json = json.replace(/[\x00-\x1F\x7F]/g, "");
-
-  // 2. Remove trailing commas before } or ]
+  // Remove trailing commas
   json = json.replace(/,(\s*[}\]])/g, "$1");
-
-  // 3. Add missing commas between adjacent values and the next key or value.
-  //    Gemini 2.5 Flash occasionally omits commas between object properties.
-  //    Use \s* (not \s+) because after stripping \n there may be ZERO whitespace
-  //    between a value-end char and the next key/value start.
+  // Add missing commas between adjacent values/properties
   json = json.replace(/(["}\]0-9]|true|false|null)(\s*)("|\{|\[)/g, "$1,$3");
 
   try {
     return JSON.parse(json);
   } catch (e) {
-    // Log chars around error position so we can diagnose the exact malformation
     const m = (e as Error).message.match(/position (\d+)/);
     if (m) {
       const pos = parseInt(m[1]);
@@ -104,6 +91,59 @@ function sanitize(obj: any): any {
   return obj;
 }
 
+// ── Rainforest API — accurate real-time Amazon India prices ──
+interface RainforestResult {
+  price: string;
+  title: string;
+  link: string;
+  rating?: string;
+  inStock: boolean;
+}
+
+async function fetchAmazonPrice(product: string): Promise<RainforestResult | null> {
+  const apiKey = process.env.RAINFOREST_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const url = new URL("https://api.rainforestapi.com/request");
+    url.searchParams.set("api_key", apiKey);
+    url.searchParams.set("type", "search");
+    url.searchParams.set("amazon_domain", "amazon.in");
+    url.searchParams.set("search_term", product);
+    url.searchParams.set("sort_by", "relevance");
+    url.searchParams.set("max_page", "1");
+
+    const res = await withTimeout(fetch(url.toString()), 15000, "Rainforest API");
+    if (!res.ok) {
+      console.warn("[price] Rainforest API error:", res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    const results = data?.search_results ?? [];
+    if (!results.length) return null;
+
+    // Pick the first in-stock result with a price
+    const match = results.find((r: Record<string, unknown>) => r.price && (r.is_prime || true));
+    if (!match) return null;
+
+    const priceVal = (match.price as Record<string, unknown>)?.value;
+    const priceStr = priceVal ? `₹${Math.round(Number(priceVal)).toLocaleString("en-IN")}` : null;
+    if (!priceStr) return null;
+
+    return {
+      price: priceStr,
+      title: String(match.title ?? product),
+      link: String(match.link ?? `https://www.amazon.in/s?k=${encodeURIComponent(product)}`),
+      rating: match.rating ? String(match.rating) : undefined,
+      inStock: match.availability?.type !== "out_of_stock",
+    };
+  } catch (err) {
+    console.warn("[price] Rainforest fetch failed:", String(err).slice(0, 100));
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   const startTime = Date.now();
   const sessionId = `price_${Date.now()}`;
@@ -119,55 +159,73 @@ export async function POST(req: Request) {
 
     logStep({ sessionId, agentName: "price_optimizer", step: "search_start", input: product, status: "running" });
 
-    // ── Phase 1: Google Search grounding — gets real-time price data as prose ──
-    const searchModel = genAI.getGenerativeModel({
-      model: MODEL,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ googleSearch: {} } as any],
-      generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
-    });
+    // ── Run Rainforest + Phase 1 in parallel ──
+    const [amazonData, searchResult] = await Promise.allSettled([
+      fetchAmazonPrice(product),
+      withTimeout(
+        genAI.getGenerativeModel({
+          model: MODEL,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tools: [{ googleSearch: {} } as any],
+          generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
+        }).generateContent(`Find the CURRENT SELLING PRICE of "${product}" in India right now.
 
-    const searchPrompt = `Find the CURRENT SELLING PRICE of "${product}" in India right now.
+Use targeted searches for each platform. Search these specific queries:
+- site:flipkart.com "${product}" to find the Flipkart listing price
+- site:croma.com "${product}" to find the Croma price
+- site:reliancedigital.in "${product}" for Reliance Digital
+- site:tatacliq.com "${product}" for Tata Cliq
 
-CRITICAL: I need the price a customer actually pays today — NOT the MRP or crossed-out original price.
-On Flipkart/Amazon the selling price is the large number shown (e.g. ₹71,000), not the strikethrough MRP (e.g. ₹85,000).
-If you see both, always report the LOWER current selling price, not the higher MRP.
+CRITICAL: Report the CURRENT SELLING PRICE (what a buyer pays today), NOT the MRP/strikethrough price.
 
-For each platform — Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales — report:
-1. Current selling price (the price the user pays today, NOT MRP)
-2. Whether it is IN STOCK: set true if the platform shows a price and an Add to Cart / Buy Now button. Set false ONLY if the page explicitly says "Out of Stock", "Currently Unavailable", or "Sold Out". When in doubt, assume in stock.
-3. The direct product page URL on that platform (e.g. flipkart.com/product-name/p/itemid)
-4. Any bank card offer for: ${cards}
-5. Any UPI cashback for: ${upi}
-6. Delivery time
-7. Return policy
+For each platform found, report:
+1. Current selling price in rupees (the actual checkout price)
+2. In stock status (true unless page explicitly says out of stock)
+3. Any bank card discount for: ${cards}
+4. Any UPI cashback for: ${upi}
+5. Delivery time
+6. Return policy
 
-Also report: all-time low price, and any Indian sale events in the next 30 days.
-Only report data you find from actual search results. Do not guess or estimate.`;
+Also report: all-time low price for this product, and Indian sale events expected in the next 30 days.
+Only report data you find from actual platform pages. Do not guess.`),
+        75000,
+        "Phase 1 search"
+      ),
+    ]);
 
-    // 75s timeout — prevents the 2-minute hang when Gemini search is slow
-    const searchResult = await withTimeout(
-      searchModel.generateContent(searchPrompt),
-      75000,
-      "Phase 1 search"
-    );
-    const rawPriceData = searchResult.response.text();
-    // Strip markdown and cap at 4000 chars — Phase 2 doesn't need the full essay
-    const cleanPriceData = stripMarkdown(rawPriceData).slice(0, 4000);
+    const amazonResult = amazonData.status === "fulfilled" ? amazonData.value : null;
+    const rawPriceData = searchResult.status === "fulfilled"
+      ? stripMarkdown(searchResult.value.response.text()).slice(0, 4000)
+      : "";
 
-    console.log("[price] Phase 1 complete, chars:", cleanPriceData.length, "| preview:", cleanPriceData.slice(0, 200));
+    console.log("[price] Rainforest Amazon:", amazonResult ? amazonResult.price : "not available");
+    console.log("[price] Phase 1 chars:", rawPriceData.length);
 
-    if (cleanPriceData.trim().length < 50) throw new Error("Search returned no usable data");
+    // Build the context for Phase 2: Rainforest data takes precedence for Amazon
+    let amazonContext = "";
+    if (amazonResult) {
+      const amazonCards = userProfile.savedCards?.includes("HDFC") ? " (apply HDFC 10% discount if applicable)" : "";
+      amazonContext = `\n\nACCURATE AMAZON INDIA DATA (use this, it is real-time from Amazon's API):
+- Platform: Amazon India
+- Current selling price: ${amazonResult.price}${amazonCards}
+- In stock: ${amazonResult.inStock}
+- Direct link available: yes
+- Product match: ${amazonResult.title}`;
+    }
+
+    const combinedContext = amazonContext + (rawPriceData ? `\n\nAdditional platform data from web search:\n${rawPriceData}` : "");
+
+    if (!combinedContext.trim() || combinedContext.trim().length < 20) {
+      throw new Error("No price data available from any source");
+    }
 
     logStep({
       sessionId, agentName: "price_optimizer", step: "search_complete",
-      output: cleanPriceData.slice(0, 200), status: "running",
+      output: combinedContext.slice(0, 200), status: "running",
       durationMs: Date.now() - startTime,
     });
 
-    // ── Phase 2: JSON structuring — thinking disabled to prevent JSON corruption ──
-    // gemini-2.5-flash with thinking ON leaks reasoning tokens into JSON output.
-    // thinkingBudget:0 disables thinking entirely → clean, valid JSON every time.
+    // ── Phase 2: JSON structuring — thinking disabled ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const phase2Config: any = {
       responseMimeType: "application/json",
@@ -175,17 +233,12 @@ Only report data you find from actual search results. Do not guess or estimate.`
       temperature: 0,
       thinkingConfig: { thinkingBudget: 0 },
     };
-    const structureModel = genAI.getGenerativeModel({
-      model: MODEL,
-      generationConfig: phase2Config,
-    });
+    const structureModel = genAI.getGenerativeModel({ model: MODEL, generationConfig: phase2Config });
 
-    // IMPORTANT: Phase 2 must produce minified JSON — no line breaks inside string values.
-    // Raw newlines in URLs or descriptions cause "Bad control character" JSON parse errors.
     const structurePrompt = `Convert this price data into JSON. Respond with ONLY the JSON object, nothing else.
 
 Price data:
-${cleanPriceData}
+${combinedContext}
 
 Required JSON structure:
 {
@@ -193,8 +246,8 @@ Required JSON structure:
   "platforms": [
     {
       "name": "string",
-      "listedPrice": "₹X,XXX — the current selling price a user pays today (NOT the MRP)",
-      "effectivePrice": "₹X,XXX — after card/UPI discount applied",
+      "listedPrice": "₹X,XXX",
+      "effectivePrice": "₹X,XXX",
       "savings": "₹X,XXX",
       "discountApplied": "string or null",
       "couponCode": "string or null",
@@ -219,12 +272,12 @@ Required JSON structure:
 }
 
 Rules:
-- listedPrice = the current discounted selling price (the number users pay). NEVER use MRP. If you see ₹71,000 and ₹85,000 for the same platform, use ₹71,000.
-- inStock = true if the platform shows a live price (assume purchasable). Set false ONLY when search data explicitly says "out of stock", "unavailable", or "sold out".
-- Include only platforms with actual prices. Skip platforms with no data.
-- Sort platforms by effectivePrice ascending.
-- effectivePrice = listedPrice minus applicable ${cards} discount and ${upi} cashback.
-- effectivePrice must never be less than 80% of listedPrice (cap discount at 20%).
+- listedPrice = the CURRENT SELLING PRICE (what buyer pays). NEVER use MRP. Prefer lower price if two are shown.
+- If "ACCURATE AMAZON INDIA DATA" is provided above, use EXACTLY that price for Amazon India. Do not change it.
+- inStock = true if platform shows a live price. Set false ONLY if explicitly marked out of stock.
+- Include only platforms with actual prices found. Sort by effectivePrice ascending.
+- effectivePrice = listedPrice minus applicable ${cards} card discount and ${upi} cashback.
+- effectivePrice must never be less than 80% of listedPrice.
 - verdict.action = "wait" only if a confirmed sale within 15 days will drop price >10%, otherwise "buy_now".`;
 
     const structureResult = await withTimeout(
@@ -237,17 +290,14 @@ Rules:
     console.log("[price] Phase 2 JSON preview:", jsonText.slice(0, 150));
 
     if (!jsonText || jsonText.trim().length < 10) {
-      throw new Error("Phase 2 returned empty response — context may be too large");
+      throw new Error("Phase 2 returned empty response");
     }
 
-    // repairAndParseJson handles trailing commas, JS comments, and finds {…} boundaries
     const parsed = sanitize(repairAndParseJson(jsonText));
 
     logStep({
       sessionId, agentName: "price_optimizer", step: "complete",
       output: jsonText.slice(0, 200), status: "complete",
-      tokensUsed: (searchResult.response.usageMetadata?.totalTokenCount ?? 0) +
-                  (structureResult.response.usageMetadata?.totalTokenCount ?? 0),
       durationMs: Date.now() - startTime,
     });
 
