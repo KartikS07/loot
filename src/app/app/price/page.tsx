@@ -49,9 +49,15 @@ const PLATFORM_SEARCH: Record<string, (q: string) => string> = {
 
 function getPlatformUrl(platform: Platform, productName: string | null | undefined): string {
   // Guard: never pass null/undefined to encodeURIComponent — falls back to platform name
-  const query = (typeof productName === "string" && productName.trim())
+  const rawQuery = (typeof productName === "string" && productName.trim())
     ? productName
     : platform.name;
+
+  // Clean the query: Gemini sometimes returns full spec-laden titles (e.g.
+  // "Philips Air Purifier AC2220, CADR 420m³/h, Medium to Large room size...")
+  // which produces bad search results. Keep only the first 5 words — that's
+  // always brand + model/series, which is what platform search needs.
+  const query = rawQuery.split(/[\s,]+/).slice(0, 6).join(" ");
 
   // productUrl removed from schema — skip this check
   const searchFn = Object.entries(PLATFORM_SEARCH).find(([key]) =>
@@ -254,8 +260,8 @@ function PricePage() {
                     p.name.toLowerCase().includes((result.verdict.bestPlatform ?? "").toLowerCase())
                   );
                   const buyUrl = bestPlatform
-                    ? getPlatformUrl(bestPlatform, result.product)
-                    : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, result.product);
+                    ? getPlatformUrl(bestPlatform, product)
+                    : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, product);
                   return buyUrl ? (
                     <a
                       href={buyUrl}
@@ -327,7 +333,7 @@ function PricePage() {
                       {p.sellerTrust && <span className="text-zinc-700">{p.sellerTrust}</span>}
                     </div>
                     <a
-                      href={getPlatformUrl(p, result.product)}
+                      href={getPlatformUrl(p, product)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-all text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500"
