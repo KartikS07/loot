@@ -90,18 +90,23 @@ export async function POST(req: Request) {
       generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
     });
 
-    const searchPrompt = `Find the current retail price of "${product}" in India today.
+    const searchPrompt = `Find the CURRENT SELLING PRICE of "${product}" in India right now.
 
-For each of these platforms — Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales — report:
-- Exact listed/selling price in rupees
-- Any active bank card offer for: ${cards}
-- Any UPI cashback for: ${upi}
-- In stock: yes/no
-- Delivery time
-- Return policy
+CRITICAL: I need the price a customer actually pays today — NOT the MRP or crossed-out original price.
+On Flipkart/Amazon the selling price is the large number shown (e.g. ₹71,000), not the strikethrough MRP (e.g. ₹85,000).
+If you see both, always report the LOWER current selling price, not the higher MRP.
 
-Also report the all-time low price and any Indian sale events expected in the next 30 days.
-Only report prices you actually find. Do not estimate.`;
+For each platform — Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales — report:
+1. Current selling price (the price the user pays today, NOT MRP)
+2. Whether it is IN STOCK: set true if the platform shows a price and an Add to Cart / Buy Now button. Set false ONLY if the page explicitly says "Out of Stock", "Currently Unavailable", or "Sold Out". When in doubt, assume in stock.
+3. The direct product page URL on that platform (e.g. flipkart.com/product-name/p/itemid)
+4. Any bank card offer for: ${cards}
+5. Any UPI cashback for: ${upi}
+6. Delivery time
+7. Return policy
+
+Also report: all-time low price, and any Indian sale events in the next 30 days.
+Only report data you find from actual search results. Do not guess or estimate.`;
 
     const searchResult = await searchModel.generateContent(searchPrompt);
     const rawPriceData = searchResult.response.text();
@@ -145,21 +150,23 @@ Required JSON structure:
   "platforms": [
     {
       "name": "string",
-      "listedPrice": "₹X,XXX",
-      "effectivePrice": "₹X,XXX",
+      "listedPrice": "₹X,XXX — the current selling price a user pays today (NOT the MRP)",
+      "effectivePrice": "₹X,XXX — after card/UPI discount applied",
       "savings": "₹X,XXX",
-      "discountApplied": "string describing discount or null",
+      "discountApplied": "string or null",
       "couponCode": "string or null",
       "inStock": true,
       "deliveryEta": "string",
       "sellerTrust": "string",
-      "returnPolicy": "string"
+      "returnPolicy": "string",
+      "productUrl": "direct product page URL found in search data, or null if not found"
     }
   ],
   "verdict": {
     "action": "buy_now",
     "bestPlatform": "string",
     "bestEffectivePrice": "₹X,XXX",
+    "buyUrl": "direct URL to buy on best platform — same as productUrl of the best platform",
     "savings": "string",
     "reason": "string",
     "waitUntil": null,
@@ -171,12 +178,14 @@ Required JSON structure:
 }
 
 Rules:
-- Include only platforms with actual prices found. Skip platforms with no data.
-- Sort platforms by effectivePrice cheapest first.
-- effectivePrice = listedPrice minus ${cards} card discount and ${upi} UPI cashback if applicable.
-- effectivePrice must never be less than 50% of listedPrice.
-- verdict.action is "wait" only if a major sale within 15 days will drop price by more than 10%, otherwise "buy_now".
-- User's cards: ${cards}. User's UPI: ${upi}.`;
+- listedPrice = the current discounted selling price (the number users pay). NEVER use MRP. If you see ₹71,000 and ₹85,000 for the same platform, use ₹71,000.
+- inStock = true if the platform shows a live price (assume purchasable). Set false ONLY when search data explicitly says "out of stock", "unavailable", or "sold out".
+- productUrl = paste the actual product page URL from the search data. If multiple URLs found, use the most specific one. If not found, set null.
+- Include only platforms with actual prices. Skip platforms with no data.
+- Sort platforms by effectivePrice ascending.
+- effectivePrice = listedPrice minus applicable ${cards} discount and ${upi} cashback.
+- effectivePrice must never be less than 80% of listedPrice (cap discount at 20%).
+- verdict.action = "wait" only if a confirmed sale within 15 days will drop price >10%, otherwise "buy_now".`;
 
     const structureResult = await structureModel.generateContent(structurePrompt);
     const jsonText = structureResult.response.text();

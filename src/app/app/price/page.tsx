@@ -14,6 +14,7 @@ interface Platform {
   deliveryEta: string;
   sellerTrust: string;
   returnPolicy: string;
+  productUrl: string | null;
 }
 
 interface PriceResult {
@@ -24,6 +25,7 @@ interface PriceResult {
     action: "buy_now" | "wait";
     bestPlatform: string;
     bestEffectivePrice: string;
+    buyUrl: string | null;
     savings: string;
     reason: string;
     waitUntil: string | null;
@@ -32,6 +34,28 @@ interface PriceResult {
   priceContext: string;
   atl: string;
   upcomingSales: string[];
+}
+
+// Fallback search URLs when Gemini can't find the direct product page
+const PLATFORM_SEARCH: Record<string, (q: string) => string> = {
+  "Amazon India": (q) => `https://www.amazon.in/s?k=${encodeURIComponent(q)}`,
+  "Flipkart": (q) => `https://www.flipkart.com/search?q=${encodeURIComponent(q)}`,
+  "Croma": (q) => `https://www.croma.com/searchB?q=${encodeURIComponent(q)}`,
+  "Reliance Digital": (q) => `https://www.reliancedigital.in/search?q=${encodeURIComponent(q)}`,
+  "Tata Cliq": (q) => `https://www.tatacliq.com/search/?searchCategory=all&text=${encodeURIComponent(q)}`,
+  "Vijay Sales": (q) => `https://www.vijaysales.com/search/${encodeURIComponent(q)}`,
+  "Blinkit": (q) => `https://blinkit.com/s/?q=${encodeURIComponent(q)}`,
+  "Zepto": (q) => `https://www.zepto.com/search?query=${encodeURIComponent(q)}`,
+};
+
+function getPlatformUrl(platform: Platform, productName: string): string {
+  if (platform.productUrl && platform.productUrl.startsWith("http")) {
+    return platform.productUrl;
+  }
+  const searchFn = Object.entries(PLATFORM_SEARCH).find(([key]) =>
+    platform.name.toLowerCase().includes(key.toLowerCase())
+  )?.[1];
+  return searchFn ? searchFn(productName) : `https://www.google.com/search?q=${encodeURIComponent(platform.name + " " + productName)}`;
 }
 
 function getProfile() {
@@ -213,13 +237,30 @@ function PricePage() {
                 }`}>
                   {px(result.verdict.savings)}
                 </div>
-                <p className="text-zinc-400 text-sm leading-relaxed">{result.verdict.reason}</p>
+                <p className="text-zinc-400 text-sm leading-relaxed mb-4">{result.verdict.reason}</p>
                 {result.verdict.action === "wait" && result.verdict.waitUntil && (
-                  <p className="text-amber-400/70 text-xs mt-2">
+                  <p className="text-amber-400/70 text-xs mb-4">
                     Wait until: {result.verdict.waitUntil}
                     {result.verdict.expectedWaitPrice && ` — expected ${result.verdict.expectedWaitPrice}`}
                   </p>
                 )}
+                {result.verdict.action === "buy_now" && (() => {
+                  const bestPlatform = result.platforms.find(p =>
+                    p.name.toLowerCase().includes(result.verdict.bestPlatform.toLowerCase())
+                  );
+                  const buyUrl = result.verdict.buyUrl ||
+                    (bestPlatform ? getPlatformUrl(bestPlatform, result.product) : null);
+                  return buyUrl ? (
+                    <a
+                      href={buyUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 bg-green-400 hover:bg-green-300 text-black font-black rounded-xl px-6 py-3 text-sm transition-colors"
+                    >
+                      Buy on {result.verdict.bestPlatform} →
+                    </a>
+                  ) : null;
+                })()}
               </div>
               <div className="text-4xl shrink-0">
                 {result.verdict.action === "buy_now" ? "🎯" : "⏳"}
@@ -249,8 +290,8 @@ function PricePage() {
                       )}
                       <span className="text-white font-bold text-sm">{p.name}</span>
                       {!p.inStock && (
-                        <span className="text-[10px] bg-red-400/15 text-red-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
-                          Out of stock
+                        <span className="text-[10px] bg-amber-400/10 text-amber-500 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                          Check availability
                         </span>
                       )}
                     </div>
@@ -266,7 +307,7 @@ function PricePage() {
                       )}
                     </div>
 
-                    <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
+                    <div className="flex flex-wrap gap-3 text-xs text-zinc-500 mb-3">
                       {p.discountApplied && p.discountApplied !== "none" && p.discountApplied !== "No applicable discounts found" && (
                         <span className="text-blue-400">{p.discountApplied}</span>
                       )}
@@ -279,6 +320,14 @@ function PricePage() {
                       {p.returnPolicy && <span>↩ {p.returnPolicy}</span>}
                       {p.sellerTrust && <span className="text-zinc-700">{p.sellerTrust}</span>}
                     </div>
+                    <a
+                      href={getPlatformUrl(p, result.product)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-all text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500"
+                    >
+                      View on {p.name} ↗
+                    </a>
                   </div>
                 </div>
               ))}
