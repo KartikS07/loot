@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 function getProfile() {
@@ -93,17 +93,28 @@ export default function SavingsPage() {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const profile = typeof window !== "undefined" ? getProfile() : {};
+  // All client-only values deferred to useEffect to prevent SSR hydration mismatch
+  const [profile, setProfile] = useState<Record<string, string>>({});
+  const [stats, setStats] = useState({ loots: 5, savedPerLoot: 1200, bestSaving: 2200 });
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const p = getProfile();
+    setProfile(p);
+    setStats({
+      loots: Math.max(1, Math.floor(Math.random() * 8) + 3),
+      savedPerLoot: Math.floor(Math.random() * 2000) + 800,
+      bestSaving: Math.floor(Math.random() * 3000) + 1500,
+    });
+    setMounted(true);
+  }, []);
+
   const name = profile.name ?? "";
   const persona = profile.persona ?? "value_hunter";
-
-  // Calculate stats from localStorage session data
-  const loots = Math.max(1, Math.floor(Math.random() * 8) + 3); // demo: 3-10
-  const savedPerLoot = Math.floor(Math.random() * 2000) + 800;
+  const { loots, savedPerLoot, bestSaving } = stats;
   const savedAmount = loots * savedPerLoot;
-  const bestLoot = "₹" + (Math.floor(Math.random() * 3000) + 1500).toLocaleString("en-IN") + " saved";
-
-  const year = new Date().getFullYear();
+  const bestLoot = "₹" + bestSaving.toLocaleString("en-IN") + " saved";
+  const year = 2026;
 
   async function share() {
     const text = `I saved ₹${savedAmount.toLocaleString("en-IN")} on ${loots} purchases using Loot 🎯\n\nNot just a deal. A loot.\n\nGet your Loot Report: loot-eta.vercel.app`;
@@ -138,6 +149,18 @@ export default function SavingsPage() {
   function shareLinkedIn() {
     const url = encodeURIComponent("https://loot-eta.vercel.app");
     window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${url}`, "_blank");
+  }
+
+  if (!mounted) {
+    return (
+      <div className="max-w-2xl mx-auto flex items-center justify-center min-h-[60vh]">
+        <div className="flex gap-1">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
