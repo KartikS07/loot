@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
 
 interface Recommendation {
   rank: number;
@@ -371,6 +372,14 @@ export default function ResearchPage() {
               ))}
             </div>
           </div>
+
+          {/* Feedback after results */}
+          <FeedbackWidget
+            module="researcher"
+            productName={messages[0]?.content ?? "unknown"}
+            sessionId={sessionId}
+            label="Did these recommendations help?"
+          />
         </div>
       )}
 

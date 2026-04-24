@@ -52,4 +52,14 @@ export default defineSchema({
     status: v.string(),
     createdAt: v.number(),
   }).index("by_session", ["sessionId"]),
+
+  feedback: defineTable({
+    module: v.string(),       // "researcher" | "price_optimizer"
+    rating: v.string(),       // "up" | "down"
+    productName: v.string(),
+    comment: v.optional(v.string()),
+    userEmail: v.optional(v.string()),
+    sessionId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_module", ["module"]),
 });

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as feedback from "../feedback.js";
 import type * as searches from "../searches.js";
 import type * as users from "../users.js";
 import type * as waitlist from "../waitlist.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  feedback: typeof feedback;
   searches: typeof searches;
   users: typeof users;
   waitlist: typeof waitlist;

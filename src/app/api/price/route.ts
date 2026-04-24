@@ -123,8 +123,16 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
     if (!results.length) return null;
 
     // Score each result by word overlap with the product name.
-    // Uses word-set matching (not substring) so "buds" won't match "earbuds",
-    // and keeps short numeric tokens (e.g. "5" distinguishes "Air 5" from "Air 7").
+    // Uses word-set matching: "buds" won't match "earbuds",
+    // numeric tokens kept so "5" distinguishes "Air 5" from "Air 7".
+    // Accessories (replacement filters, cases, cables) are heavily penalised.
+    const ACCESSORY_WORDS = new Set([
+      "replacement", "filter", "refill", "case", "cover", "sleeve", "bag", "pouch",
+      "strap", "cable", "charger", "adapter", "plug", "cord", "stand", "mount",
+      "holder", "pad", "mat", "protector", "glass", "skin", "wrap", "spare",
+      "cartridge", "capsule", "pod", "ink", "toner", "bulb", "lamp", "tube",
+    ]);
+
     const productTokens = product.toLowerCase()
       .replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(w => w.length >= 1);
 
@@ -137,7 +145,10 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
         String(r.title ?? "").toLowerCase().replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(w => w.length >= 1)
       );
       const hits = productTokens.filter(t => titleWords.has(t)).length;
-      return { r, score: hits / productTokens.length };
+      const baseScore = hits / productTokens.length;
+      // Heavy penalty for accessory/replacement results — not the main product
+      const isAccessory = [...titleWords].some(w => ACCESSORY_WORDS.has(w));
+      return { r, score: isAccessory ? baseScore * 0.15 : baseScore };
     }).sort((a: { r: unknown; score: number }, b: { r: unknown; score: number }) => b.score - a.score);
 
     const match = scored[0]?.r ?? null;

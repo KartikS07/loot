@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
 
 interface Platform {
   name: string;
@@ -360,6 +361,13 @@ function PricePage() {
               </div>
             )}
           </div>
+
+          {/* Feedback after price results */}
+          <FeedbackWidget
+            module="price_optimizer"
+            productName={product}
+            label="Did we find the right product and price?"
+          />
 
           <div className="flex gap-3">
             <button
