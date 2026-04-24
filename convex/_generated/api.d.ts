@@ -9,6 +9,7 @@
  */
 
 import type * as feedback from "../feedback.js";
+import type * as savings from "../savings.js";
 import type * as searches from "../searches.js";
 import type * as users from "../users.js";
 import type * as waitlist from "../waitlist.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   feedback: typeof feedback;
+  savings: typeof savings;
   searches: typeof searches;
   users: typeof users;
   waitlist: typeof waitlist;

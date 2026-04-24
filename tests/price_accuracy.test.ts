@@ -164,11 +164,11 @@ async function runAll() {
         "No Amazon direct link in directLinks — will fall back to search URL"
       );
       assert(
-        amazonLink.includes("/dp/"),
+        amazonLink!.includes("/dp/"),
         `Amazon link is a search URL, not a product page: ${amazonLink}`
       );
       assert(
-        !amazonLink.includes("/s?k="),
+        !amazonLink!.includes("/s?k="),
         `Amazon link still uses search format: ${amazonLink}`
       );
     });
@@ -192,7 +192,7 @@ async function runAll() {
         ].join(" ")
       );
       assert(
-        flipkartLink.includes("/p/"),
+        flipkartLink!.includes("/p/"),
         `Flipkart link does not contain /p/ — it's a search URL: ${flipkartLink}`
       );
     });
