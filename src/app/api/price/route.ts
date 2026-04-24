@@ -228,7 +228,7 @@ CRITICAL: Report the CURRENT SELLING PRICE (what a buyer pays today), NOT the MR
 
 For each platform where the product is found, report:
 1. Current selling price in rupees
-2. The FULL direct product page URL (include the complete URL so it can be extracted)
+2. The FULL direct product page URL — this is critical. For Flipkart it looks like https://www.flipkart.com/[slug]/p/[itemId] — search the product on Flipkart and give me the exact /p/ URL. For Amazon it looks like https://www.amazon.in/dp/[ASIN]. Copy the complete URL exactly.
 3. In stock status
 4. For quick commerce (Blinkit/Zepto/Instamart): note it's same-day delivery, city-specific
 5. Any bank card discount for: ${cards}
