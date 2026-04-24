@@ -88,9 +88,9 @@ function getProfile() {
   catch { return {}; }
 }
 
-// Safe price string — returns "—" instead of null/undefined/object
+// Safe price string — returns "—" instead of null/undefined/object; strips trailing commas
 function px(s: unknown): string {
-  if (typeof s === "string" && s.trim()) return s;
+  if (typeof s === "string" && s.trim()) return s.trim().replace(/,\s*$/, "");
   return "—";
 }
 
@@ -112,12 +112,13 @@ const LOADING_MESSAGES = [
 ];
 
 // Auto-log a deal when user clicks "Buy on Platform"
-// Fire-and-forget — never blocks the redirect
+// savings = actual discount from listed price (e.g. ₹7,249 off with HDFC card)
+// NOT vs highest alternative — that gave ₹0 when only one platform existed
 async function logDeal(
   productName: string,
   platform: string,
   bestPrice: number,
-  marketHighPrice: number
+  savings: number        // renamed from marketHighPrice — this is the actual saving
 ) {
   try {
     const profile = getProfile();
@@ -129,8 +130,8 @@ async function logDeal(
       productName,
       platform,
       bestPrice,
-      marketHighPrice,
-      savedVsHighest: Math.max(0, marketHighPrice - bestPrice),
+      marketHighPrice: bestPrice + savings,  // reconstruct for API compatibility
+      savedVsHighest: Math.max(0, savings),
       confirmedPurchase: false,
       createdAt: Date.now(),
     };
@@ -144,7 +145,7 @@ async function logDeal(
         productName,
         platform,
         bestPrice,
-        marketHighPrice,
+        marketHighPrice: deal.marketHighPrice,
         userEmail: profile.email || undefined,
         sessionId: deal.id,
       }),
@@ -301,11 +302,16 @@ function PricePage() {
                   {px(result.verdict.bestEffectivePrice)}
                   <span className="text-zinc-500 font-normal text-base ml-2">on {px(result.verdict.bestPlatform)}</span>
                 </div>
-                <div className={`text-sm font-medium mb-3 ${
-                  result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"
-                }`}>
-                  {px(result.verdict.savings)}
-                </div>
+                {result.verdict.savings && px(result.verdict.savings) !== "—" && (
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className={`text-sm font-bold ${
+                      result.verdict.action === "buy_now" ? "text-green-400" : "text-amber-400"
+                    }`}>
+                      {px(result.verdict.savings)}
+                    </span>
+                    <span className="text-zinc-600 text-xs">vs listed price</span>
+                  </div>
+                )}
                 <p className="text-zinc-400 text-sm leading-relaxed mb-4">{result.verdict.reason}</p>
                 {result.verdict.action === "wait" && result.verdict.waitUntil && (
                   <p className="text-amber-400/70 text-xs mb-4">
@@ -320,25 +326,48 @@ function PricePage() {
                   const buyUrl = bestPlatform
                     ? getPlatformUrl(bestPlatform, product, result.directLinks)
                     : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, product, result.directLinks);
-                  const marketHigh = Math.max(
-                    ...result.platforms.map(p => parsePx(p.effectivePrice)).filter(v => v !== Infinity)
-                  );
-                  return buyUrl ? (
-                    <a
-                      href={buyUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => logDeal(
-                        product,
-                        result.verdict.bestPlatform ?? "",
-                        parsePx(result.verdict.bestEffectivePrice),
-                        marketHigh
+                  // Use actual savings from verdict (e.g. ₹7,249 from HDFC discount)
+                  // NOT vs-highest-alternative which gives ₹0 when only one platform exists
+                  const actualSavings = parsePx(result.verdict.savings);
+                  return (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {buyUrl && (
+                        <a
+                          href={buyUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => logDeal(
+                            product,
+                            result.verdict.bestPlatform ?? "",
+                            parsePx(result.verdict.bestEffectivePrice),
+                            actualSavings
+                          )}
+                          className="inline-flex items-center gap-2 bg-green-400 hover:bg-green-300 text-black font-black rounded-xl px-6 py-3 text-sm transition-colors"
+                        >
+                          Buy on {result.verdict.bestPlatform} →
+                        </a>
                       )}
-                      className="inline-flex items-center gap-2 bg-green-400 hover:bg-green-300 text-black font-black rounded-xl px-6 py-3 text-sm transition-colors"
-                    >
-                      Buy on {result.verdict.bestPlatform} →
-                    </a>
-                  ) : null;
+                      {/* Save button lives next to Buy — easier to find */}
+                      <button
+                        onClick={() => {
+                          const saved = saveToWishlist({
+                            productName: product,
+                            platform: result.verdict.bestPlatform,
+                            bestPrice: parsePx(result.verdict.bestEffectivePrice),
+                          });
+                          if (saved) setWishlisted(true);
+                        }}
+                        title={wishlisted ? "Saved to wishlist" : "Save to wishlist"}
+                        className={`border rounded-xl px-4 py-3 text-sm font-medium transition-all ${
+                          wishlisted
+                            ? "border-amber-400/40 text-amber-400 bg-amber-400/10"
+                            : "border-zinc-700 hover:border-zinc-500 text-zinc-400"
+                        }`}
+                      >
+                        {wishlisted ? "♥ Saved" : "♡ Save"}
+                      </button>
+                    </div>
+                  );
                 })()}
               </div>
               <div className="text-4xl shrink-0">
@@ -405,7 +434,8 @@ function PricePage() {
                         product,
                         p.name,
                         parsePx(p.effectivePrice),
-                        Math.max(...sortedPlatforms.map(pl => parsePx(pl.effectivePrice)).filter(v => v !== Infinity))
+                        // Per-platform savings = listedPrice - effectivePrice
+                        Math.max(0, parsePx(p.listedPrice) - parsePx(p.effectivePrice))
                       )}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -456,22 +486,8 @@ function PricePage() {
               ← Research another
             </button>
             <button
-              onClick={() => {
-                const bestPrice = result ? parsePx(result.verdict.bestEffectivePrice) : 0;
-                const saved = saveToWishlist({ productName: product, platform: result?.verdict.bestPlatform, bestPrice });
-                if (saved) setWishlisted(true);
-              }}
-              className={`border rounded-xl px-4 py-3 text-sm font-medium transition-all ${
-                wishlisted
-                  ? "border-amber-400/40 text-amber-400 bg-amber-400/10"
-                  : "border-zinc-800 hover:border-zinc-700 text-zinc-400"
-              }`}
-            >
-              {wishlisted ? "♥ Saved" : "♡ Save"}
-            </button>
-            <button
               onClick={() => router.push("/app/savings")}
-              className="border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 font-medium rounded-xl px-4 py-3 text-sm transition-colors"
+              className="border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 font-medium rounded-xl px-5 py-3 text-sm transition-colors"
             >
               Savings →
             </button>
