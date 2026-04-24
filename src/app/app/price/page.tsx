@@ -14,7 +14,6 @@ interface Platform {
   deliveryEta: string;
   sellerTrust: string;
   returnPolicy: string;
-  productUrl: string | null;
 }
 
 interface PriceResult {
@@ -25,7 +24,6 @@ interface PriceResult {
     action: "buy_now" | "wait";
     bestPlatform: string;
     bestEffectivePrice: string;
-    buyUrl: string | null;
     savings: string;
     reason: string;
     waitUntil: string | null;
@@ -48,14 +46,17 @@ const PLATFORM_SEARCH: Record<string, (q: string) => string> = {
   "Zepto": (q) => `https://www.zepto.com/search?query=${encodeURIComponent(q)}`,
 };
 
-function getPlatformUrl(platform: Platform, productName: string): string {
-  if (platform.productUrl && platform.productUrl.startsWith("http")) {
-    return platform.productUrl;
-  }
+function getPlatformUrl(platform: Platform, productName: string | null | undefined): string {
+  // Guard: never pass null/undefined to encodeURIComponent — falls back to platform name
+  const query = (typeof productName === "string" && productName.trim())
+    ? productName
+    : platform.name;
+
+  // productUrl removed from schema — skip this check
   const searchFn = Object.entries(PLATFORM_SEARCH).find(([key]) =>
     platform.name.toLowerCase().includes(key.toLowerCase())
   )?.[1];
-  return searchFn ? searchFn(productName) : `https://www.google.com/search?q=${encodeURIComponent(platform.name + " " + productName)}`;
+  return searchFn ? searchFn(query) : `https://www.google.com/search?q=${encodeURIComponent(platform.name + " " + query)}`;
 }
 
 function getProfile() {
@@ -249,10 +250,11 @@ function PricePage() {
                 )}
                 {result.verdict.action === "buy_now" && (() => {
                   const bestPlatform = result.platforms.find(p =>
-                    p.name.toLowerCase().includes(result.verdict.bestPlatform.toLowerCase())
+                    p.name.toLowerCase().includes((result.verdict.bestPlatform ?? "").toLowerCase())
                   );
-                  const buyUrl = result.verdict.buyUrl ||
-                    (bestPlatform ? getPlatformUrl(bestPlatform, result.product) : null);
+                  const buyUrl = bestPlatform
+                    ? getPlatformUrl(bestPlatform, result.product)
+                    : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, result.product);
                   return buyUrl ? (
                     <a
                       href={buyUrl}
