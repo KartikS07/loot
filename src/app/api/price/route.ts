@@ -156,6 +156,7 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
     console.log(`[price] Rainforest best match: "${String(match.title).slice(0, 50)}" score=${scored[0].score.toFixed(2)} price=₹${match.price?.value}`);
 
     const priceVal = (match.price as Record<string, unknown>)?.value;
+    // Math.round removes decimals — prices like ₹4,949.10 become ₹4,949
     const priceStr = priceVal ? `₹${Math.round(Number(priceVal)).toLocaleString("en-IN")}` : null;
     if (!priceStr) return null;
 
