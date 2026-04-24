@@ -94,6 +94,20 @@ function px(s: unknown): string {
   return "—";
 }
 
+// Returns true only if a field value is actually useful to show.
+// Filters out Gemini's "Not found", "Not specified", "N/A" etc.
+function isUseful(v: unknown): v is string {
+  if (!v || typeof v !== "string") return false;
+  const l = v.toLowerCase().trim();
+  return l.length > 1 &&
+    !l.startsWith("not found") &&
+    !l.startsWith("not specified") &&
+    !l.startsWith("not explicitly") &&
+    !l.includes("n/a") &&
+    l !== "none" &&
+    l !== "high"; // standalone "High" sellerTrust adds no info
+}
+
 // Parse ₹ price string to integer for sorting; unparseable = Infinity (goes last)
 function parsePx(s: unknown): number {
   if (typeof s !== "string") return Infinity;
@@ -364,7 +378,11 @@ function PricePage() {
                             : "border-zinc-700 hover:border-zinc-500 text-zinc-400"
                         }`}
                       >
-                        {wishlisted ? "♥ Saved" : "♡ Save"}
+                        {wishlisted ? (
+                        <><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className="inline mr-1"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved</>
+                      ) : (
+                        <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="inline mr-1"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Save</>
+                      )}
                       </button>
                     </div>
                   );
@@ -416,7 +434,7 @@ function PricePage() {
                     </div>
 
                     <div className="flex flex-wrap gap-3 text-xs text-zinc-500 mb-3">
-                      {p.discountApplied && p.discountApplied !== "none" && p.discountApplied !== "No applicable discounts found" && (
+                      {isUseful(p.discountApplied) && p.discountApplied !== "none" && (
                         <span className="text-blue-400">{p.discountApplied}</span>
                       )}
                       {p.couponCode && typeof p.couponCode === "string" && (
@@ -424,9 +442,11 @@ function PricePage() {
                           {p.couponCode}
                         </span>
                       )}
-                      {p.deliveryEta && <span>📦 {p.deliveryEta}</span>}
-                      {p.returnPolicy && <span>↩ {p.returnPolicy}</span>}
-                      {p.sellerTrust && <span className="text-zinc-700">{p.sellerTrust}</span>}
+                      {isUseful(p.deliveryEta) && <span>📦 {p.deliveryEta}</span>}
+                      {isUseful(p.returnPolicy) && <span>↩ {p.returnPolicy}</span>}
+                      {isUseful(p.sellerTrust) && p.sellerTrust !== "High" && (
+                        <span className="text-zinc-700">{p.sellerTrust}</span>
+                      )}
                     </div>
                     <a
                       href={getPlatformUrl(p, product, result.directLinks)}

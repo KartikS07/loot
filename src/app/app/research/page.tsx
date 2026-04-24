@@ -144,7 +144,11 @@ function ProductCard({ rec, onPriceOptimize }: { rec: Recommendation; onPriceOpt
                 : "border-zinc-800 hover:border-zinc-700 text-zinc-500 hover:text-zinc-300"
             }`}
           >
-            {wishlisted ? "♥" : "♡"}
+            {wishlisted ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            )}
           </button>
           <button
             onClick={() => setExpanded(!expanded)}

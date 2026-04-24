@@ -14,13 +14,19 @@ export function FeedbackWidget({ module, productName, sessionId, label }: Props)
   const [comment, setComment] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [showComment, setShowComment] = useState(false);
+  const [toast, setToast] = useState("");
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3000);
+  }
 
   async function submit(r: "up" | "down") {
     setRating(r);
     if (r === "up") {
-      // Thumbs up — save immediately, no comment needed
       await save(r, "");
       setSubmitted(true);
+      showToast("Thanks! Glad it helped 👍");
     } else {
       // Thumbs down — ask for reason
       setShowComment(true);
@@ -47,19 +53,32 @@ export function FeedbackWidget({ module, productName, sessionId, label }: Props)
     if (rating) await save(rating, comment);
     setSubmitted(true);
     setShowComment(false);
+    showToast("Thanks for the feedback — we'll use this to improve 🙏");
   }
 
   if (submitted) {
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-600 py-2">
-        <span>{rating === "up" ? "👍" : "👎"}</span>
-        <span>Thanks for the feedback</span>
+      <div className="pt-4 border-t border-zinc-900 space-y-2">
+        {toast && (
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-zinc-300 text-xs text-center">
+            {toast}
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-xs text-zinc-600 py-1">
+          <span>{rating === "up" ? "👍" : "👎"}</span>
+          <span>Feedback received</span>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="pt-4 border-t border-zinc-900">
+      {toast && (
+        <div className="mb-2 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-zinc-300 text-xs text-center">
+          {toast}
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <span className="text-zinc-600 text-xs">
           {label ?? "Was this helpful?"}

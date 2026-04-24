@@ -91,7 +91,9 @@ function LootReportCard({ name, persona, dealsCount, totalFound, confirmedCount,
         <div className="text-zinc-500 text-xs mt-1">
           {confirmedCount > 0
             ? `${confirmedCount} purchase${confirmedCount > 1 ? "s" : ""} confirmed`
-            : "vs highest alternative price"}
+            : totalFound > 0
+              ? "in bank offers & discounts found"
+              : "use price optimizer to start tracking"}
         </div>
       </div>
 
