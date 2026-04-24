@@ -53,6 +53,18 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_session", ["sessionId"]),
 
+  deals: defineTable({
+    productName: v.string(),
+    platform: v.string(),
+    bestPrice: v.number(),
+    marketHighPrice: v.number(),
+    savedVsHighest: v.number(),
+    confirmedPurchase: v.boolean(),
+    userEmail: v.optional(v.string()),
+    sessionId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_email", ["userEmail"]),
+
   feedback: defineTable({
     module: v.string(),       // "researcher" | "price_optimizer"
     rating: v.string(),       // "up" | "down"

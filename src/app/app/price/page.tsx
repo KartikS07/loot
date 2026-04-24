@@ -110,6 +110,47 @@ const LOADING_MESSAGES = [
   "Computing your best deal...",
 ];
 
+// Auto-log a deal when user clicks "Buy on Platform"
+// Fire-and-forget — never blocks the redirect
+async function logDeal(
+  productName: string,
+  platform: string,
+  bestPrice: number,
+  marketHighPrice: number
+) {
+  try {
+    const profile = getProfile();
+    // Also save to localStorage so savings page can show "Did you buy it?" nudge
+    const DEALS_KEY = "loot_pending_deals";
+    const existing: unknown[] = JSON.parse(localStorage.getItem(DEALS_KEY) ?? "[]");
+    const deal = {
+      id: `deal_${Date.now()}`,
+      productName,
+      platform,
+      bestPrice,
+      marketHighPrice,
+      savedVsHighest: Math.max(0, marketHighPrice - bestPrice),
+      confirmedPurchase: false,
+      createdAt: Date.now(),
+    };
+    localStorage.setItem(DEALS_KEY, JSON.stringify([deal, ...existing].slice(0, 50)));
+
+    // Persist to Convex in background
+    fetch("/api/deals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productName,
+        platform,
+        bestPrice,
+        marketHighPrice,
+        userEmail: profile.email || undefined,
+        sessionId: deal.id,
+      }),
+    }).catch(() => {/* non-fatal */});
+  } catch { /* non-fatal */ }
+}
+
 function PricePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -277,11 +318,20 @@ function PricePage() {
                   const buyUrl = bestPlatform
                     ? getPlatformUrl(bestPlatform, product, result.directLinks)
                     : getPlatformUrl({ name: result.verdict.bestPlatform ?? "" } as Platform, product, result.directLinks);
+                  const marketHigh = Math.max(
+                    ...result.platforms.map(p => parsePx(p.effectivePrice)).filter(v => v !== Infinity)
+                  );
                   return buyUrl ? (
                     <a
                       href={buyUrl}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() => logDeal(
+                        product,
+                        result.verdict.bestPlatform ?? "",
+                        parsePx(result.verdict.bestEffectivePrice),
+                        marketHigh
+                      )}
                       className="inline-flex items-center gap-2 bg-green-400 hover:bg-green-300 text-black font-black rounded-xl px-6 py-3 text-sm transition-colors"
                     >
                       Buy on {result.verdict.bestPlatform} →
@@ -349,6 +399,12 @@ function PricePage() {
                     </div>
                     <a
                       href={getPlatformUrl(p, product, result.directLinks)}
+                      onClick={() => logDeal(
+                        product,
+                        p.name,
+                        parsePx(p.effectivePrice),
+                        Math.max(...sortedPlatforms.map(pl => parsePx(pl.effectivePrice)).filter(v => v !== Infinity))
+                      )}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-all text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500"
