@@ -1,15 +1,16 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+const MODEL = "gemini-2.5-flash";
 
 const getConvex = () => {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   return url ? new ConvexHttpClient(url) : null;
 };
 
-// Fire-and-forget — never blocks the main research flow
 async function logStep(params: {
   sessionId: string;
   agentName: string;
@@ -25,58 +26,53 @@ async function logStep(params: {
     if (!convex) return;
     await convex.mutation(api.searches.logAgentStep, params);
   } catch (e) {
-    console.warn("[research] Convex log failed (non-fatal):", e);
+    console.warn("[research] Convex log skipped:", String(e).slice(0, 100));
   }
 }
 
-function extractJson(text: string): string {
-  // Find the first { and last } to handle any text before/after JSON
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON object found in response");
-  return text.slice(start, end + 1);
-}
+const SYSTEM_PROMPT = `You are Loot's AI Researcher — a sharp, opinionated shopping advisor for Indian consumers. Your job: take a shopping query and return a personalised top-5 shortlist that saves the user hours of research.
 
-const SYSTEM_PROMPT = `You are Loot's AI Researcher — an expert shopping advisor for Indian consumers. Your job is to take a shopping query and return a personalised, trusted top-5 product shortlist.
+You MUST respond with ONLY a valid JSON object. No markdown. No explanation. No text outside the JSON.
 
-ALWAYS respond with ONLY a valid JSON object. No text before or after. No markdown fences.
-
-JSON schema:
+JSON schema (follow exactly):
 {
   "phase": "clarify" | "results",
-  "clarifyQuestion": string | null,
+  "clarifyQuestion": "string or null — only when phase is clarify",
   "educationLayer": {
-    "categoryGuide": string,
-    "commonMistakes": string[],
-    "insiderTip": string
-  } | null,
+    "categoryGuide": "2-3 sentence plain-English guide to the most important specs for this category",
+    "commonMistakes": ["mistake 1", "mistake 2", "mistake 3"],
+    "insiderTip": "one contrarian or non-obvious tip that separates smart buyers from the rest"
+  },
   "recommendations": [
     {
-      "rank": number,
-      "name": string,
-      "tagline": string,
-      "whyForYou": string,
-      "expertScore": number,
-      "specs": { [key: string]: string },
-      "pros": string[],
-      "cons": string[],
-      "estimatedPrice": string,
-      "platformHint": string
+      "rank": 1,
+      "name": "Full product name with model number",
+      "tagline": "10-word punchy description",
+      "whyForYou": "One sentence — why THIS product for THIS user's exact use case and persona",
+      "expertScore": 8.5,
+      "specs": {
+        "key spec 1": "value",
+        "key spec 2": "value"
+      },
+      "pros": ["pro 1", "pro 2", "pro 3"],
+      "cons": ["con 1", "con 2"],
+      "estimatedPrice": "₹X,XXX",
+      "platformHint": "Cheapest on: Amazon India / Flipkart / Croma"
     }
-  ] | null,
-  "summary": string | null
+  ],
+  "summary": "One sentence wrap-up of the top recommendation and why"
 }
 
 Rules:
-- If the initial query is vague (missing budget, use-case, or key context), set phase=clarify and ask ONE specific question. Max 1 clarifying round.
-- If the query has enough context OR after one round of clarification, set phase=results with top-5 recommendations.
-- educationLayer is required when phase=results.
-- whyForYou must be personalised to the user's persona and use-case.
-- estimatedPrice must be in Indian Rupees (₹) with a realistic current market price.
-- platformHint: which Indian platform is likely cheapest (e.g. "Amazon India", "Flipkart", "Croma").
-- expertScore: 1-10, weighted by user's stated priorities.
-- specs: only specs relevant to the user's use-case (3-5 max).
-- pros/cons: mapped to the user's specific scenario, not generic.`;
+- If the query is missing BOTH budget AND primary use-case, set phase=clarify with ONE specific question. Otherwise, go straight to phase=results.
+- phase=results: always include educationLayer + exactly 5 recommendations.
+- educationLayer is required in results phase even if phase is clarify (set to null if clarify).
+- whyForYou: personalised to the user's persona (value_hunter / quality_seeker / brand_loyalist) and stated use-case.
+- expertScore: 1-10, weighted by what the user said matters to them. Not a generic score.
+- specs: only 3-5 specs that matter for this user's use-case. Skip irrelevant ones.
+- estimatedPrice: realistic current Indian market price in ₹. Do not make up prices.
+- platformHint: best platform to buy this specific product in India right now.
+- recommendations ranked by fit for this specific user — not by price or popularity alone.`;
 
 export async function POST(req: Request) {
   const startTime = Date.now();
@@ -96,41 +92,48 @@ export async function POST(req: Request) {
     };
     sessionId = sid;
 
-    const profileContext = `\nUser profile:
-- Shopping persona: ${userProfile.persona ?? "not set"}
-- Tech expertise: ${userProfile.expertiseLevel ?? "beginner"}
-- Bank cards for discount calculation: ${userProfile.savedCards?.join(", ") || "none"}
-- UPI apps: ${userProfile.upiPreferences?.join(", ") || "none"}
+    const profileContext = `\nUser profile for personalisation:
+- Shopping persona: ${userProfile.persona ?? "not set"} (value_hunter = best deal, quality_seeker = best product, brand_loyalist = trusted brands)
+- Tech expertise level: ${userProfile.expertiseLevel ?? "beginner"} (calibrate explanation depth accordingly)
+- Bank cards (for discount hints): ${userProfile.savedCards?.join(", ") || "none specified"}
+- UPI apps: ${userProfile.upiPreferences?.join(", ") || "none specified"}
 
-Personalise all recommendations, pros/cons, and education depth to this profile.`;
+Weight recommendations, pros/cons, and education depth to this profile.`;
 
-    // Log start (non-blocking)
+    // Fire-and-forget log
     logStep({ sessionId, agentName: "researcher", step: "start", input: messages.at(-1)?.content, status: "running" });
 
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT + profileContext,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    const model = genAI.getGenerativeModel({
+      model: MODEL,
+      systemInstruction: SYSTEM_PROMPT + profileContext,
+      generationConfig: {
+        responseMimeType: "application/json",
+        maxOutputTokens: 8192,
+        temperature: 0.3,
+      },
     });
 
-    const rawText = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as Anthropic.TextBlock).text)
-      .join("");
+    // Build chat history — Gemini uses "model" not "assistant"
+    const history = messages.slice(0, -1).map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
 
-    console.log("[research] Raw response:", rawText.slice(0, 200));
+    const lastMessage = messages.at(-1)!.content;
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(lastMessage);
+    const text = result.response.text();
 
-    const jsonStr = extractJson(rawText);
-    const parsed = JSON.parse(jsonStr);
+    console.log("[research] Gemini response preview:", text.slice(0, 150));
 
-    // Log completion (non-blocking)
+    const parsed = JSON.parse(text);
+
     logStep({
       sessionId,
       agentName: "researcher",
       step: "complete",
-      output: jsonStr.slice(0, 500),
-      tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
+      output: text.slice(0, 500),
+      tokensUsed: result.response.usageMetadata?.totalTokenCount,
       durationMs: Date.now() - startTime,
       status: "complete",
     });
