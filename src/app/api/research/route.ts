@@ -69,8 +69,7 @@ JSON schema (follow exactly):
       },
       "pros": ["pro 1", "pro 2", "pro 3"],
       "cons": ["con 1", "con 2"],
-      "estimatedPrice": "₹X,XXX",
-      "platformHint": "Cheapest on: Amazon India / Flipkart / Croma"
+      "platformHint": "Usually found on: Amazon India / Flipkart / Croma"
     }
   ],
   "summary": "One sentence wrap-up of the top recommendation and why"
@@ -83,8 +82,7 @@ Rules:
 - whyForYou: personalised to the user's persona (value_hunter / quality_seeker / brand_loyalist) and stated use-case.
 - expertScore: 1-10, weighted by what the user said matters to them. Not a generic score.
 - specs: only 3-5 specs that matter for this user's use-case. Skip irrelevant ones.
-- estimatedPrice: realistic current Indian market price in ₹. Do not make up prices.
-- platformHint: best platform to buy this specific product in India right now.
+- platformHint: which Indian platform typically stocks this product. Do NOT include any price in platformHint.
 - recommendations ranked by fit for this specific user — not by price or popularity alone.`;
 
 export async function POST(req: Request) {

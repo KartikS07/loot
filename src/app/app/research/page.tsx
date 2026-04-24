@@ -12,9 +12,8 @@ interface Recommendation {
   specs: Record<string, string>;
   pros: string[];
   cons: string[];
-  estimatedPrice: string;
   platformHint: string;
-  imageQuery: string;
+  imageQuery?: string;
 }
 
 interface ResearchResult {
@@ -73,7 +72,6 @@ function ProductCard({ rec, onPriceOptimize }: { rec: Recommendation; onPriceOpt
             </div>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-amber-400 font-black text-lg">{rec.estimatedPrice}</div>
             <div className="text-zinc-600 text-xs">{rec.platformHint}</div>
           </div>
         </div>
@@ -127,7 +125,7 @@ function ProductCard({ rec, onPriceOptimize }: { rec: Recommendation; onPriceOpt
             onClick={() => onPriceOptimize(rec.name)}
             className="flex-1 bg-amber-400 hover:bg-amber-300 text-black font-bold rounded-xl py-2.5 text-sm transition-colors"
           >
-            Find best price →
+            Get live price →
           </button>
           <button
             onClick={() => setExpanded(!expanded)}
