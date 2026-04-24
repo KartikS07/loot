@@ -3,22 +3,54 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
-const SYSTEM_PROMPT = `You are Loot's AI Researcher — an expert shopping advisor for Indian consumers. Your job is to take a shopping query and return a personalized, trusted top-5 product recommendation.
+const getConvex = () => {
+  const url = process.env.NEXT_PUBLIC_CONVEX_URL;
+  return url ? new ConvexHttpClient(url) : null;
+};
 
-You have access to web_search. Use it to research products before recommending.
+// Fire-and-forget — never blocks the main research flow
+async function logStep(params: {
+  sessionId: string;
+  agentName: string;
+  step: string;
+  input?: string;
+  output?: string;
+  tokensUsed?: number;
+  durationMs?: number;
+  status: string;
+}) {
+  try {
+    const convex = getConvex();
+    if (!convex) return;
+    await convex.mutation(api.searches.logAgentStep, params);
+  } catch (e) {
+    console.warn("[research] Convex log failed (non-fatal):", e);
+  }
+}
 
-ALWAYS respond with valid JSON matching this exact schema:
+function extractJson(text: string): string {
+  // Find the first { and last } to handle any text before/after JSON
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("No JSON object found in response");
+  return text.slice(start, end + 1);
+}
+
+const SYSTEM_PROMPT = `You are Loot's AI Researcher — an expert shopping advisor for Indian consumers. Your job is to take a shopping query and return a personalised, trusted top-5 product shortlist.
+
+ALWAYS respond with ONLY a valid JSON object. No text before or after. No markdown fences.
+
+JSON schema:
 {
-  "phase": "clarify" | "research" | "results",
-  "clarifyQuestion": string | null,          // only if phase = clarify
-  "educationLayer": {                         // only if phase = results
+  "phase": "clarify" | "results",
+  "clarifyQuestion": string | null,
+  "educationLayer": {
     "categoryGuide": string,
     "commonMistakes": string[],
     "insiderTip": string
   } | null,
-  "recommendations": [                        // only if phase = results
+  "recommendations": [
     {
       "rank": number,
       "name": string,
@@ -29,108 +61,84 @@ ALWAYS respond with valid JSON matching this exact schema:
       "pros": string[],
       "cons": string[],
       "estimatedPrice": string,
-      "platformHint": string,
-      "imageQuery": string
+      "platformHint": string
     }
   ] | null,
   "summary": string | null
 }
 
 Rules:
-- If the query is vague, ask ONE clarifying question (phase: clarify). Max 2 clarifying rounds.
-- After clarifications, phase = results. Search the web, then return top-5 recommendations.
-- educationLayer must always be present in results phase.
-- whyForYou must be personalised to the user's stated persona and use case.
-- estimatedPrice must be in Indian Rupees (₹).
-- specs must only include specs relevant to the user's use case.
-- platformHint should say which platform is likely cheapest (Amazon/Flipkart/Croma etc).
-- imageQuery is a short search query to find a product image (used for display).
-- NEVER recommend products you cannot verify exist. Use web_search.
-- Do not add any text outside the JSON object.`;
+- If the initial query is vague (missing budget, use-case, or key context), set phase=clarify and ask ONE specific question. Max 1 clarifying round.
+- If the query has enough context OR after one round of clarification, set phase=results with top-5 recommendations.
+- educationLayer is required when phase=results.
+- whyForYou must be personalised to the user's persona and use-case.
+- estimatedPrice must be in Indian Rupees (₹) with a realistic current market price.
+- platformHint: which Indian platform is likely cheapest (e.g. "Amazon India", "Flipkart", "Croma").
+- expertScore: 1-10, weighted by user's stated priorities.
+- specs: only specs relevant to the user's use-case (3-5 max).
+- pros/cons: mapped to the user's specific scenario, not generic.`;
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const { messages, userProfile, sessionId } = body as {
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
-    userProfile: {
-      persona?: string;
-      expertiseLevel?: string;
-      savedCards?: string[];
-      upiPreferences?: string[];
-    };
-    sessionId: string;
-  };
-
-  const profileContext = `
-User profile:
-- Persona: ${userProfile.persona ?? "not set"}
-- Expertise: ${userProfile.expertiseLevel ?? "beginner"}
-- Bank cards: ${userProfile.savedCards?.join(", ") || "none saved"}
-- UPI: ${userProfile.upiPreferences?.join(", ") || "none saved"}
-
-Tailor all recommendations to this profile. Weigh pros/cons based on their persona. Calibrate education depth to their expertise level.`;
-
   const startTime = Date.now();
-
-  // Log agent start
-  await convex.mutation(api.searches.logAgentStep, {
-    sessionId,
-    agentName: "researcher",
-    step: "start",
-    input: messages[messages.length - 1]?.content ?? "",
-    status: "running",
-  });
+  let sessionId = "unknown";
 
   try {
+    const body = await req.json();
+    const { messages, userProfile, sessionId: sid } = body as {
+      messages: Array<{ role: "user" | "assistant"; content: string }>;
+      userProfile: {
+        persona?: string;
+        expertiseLevel?: string;
+        savedCards?: string[];
+        upiPreferences?: string[];
+      };
+      sessionId: string;
+    };
+    sessionId = sid;
+
+    const profileContext = `\nUser profile:
+- Shopping persona: ${userProfile.persona ?? "not set"}
+- Tech expertise: ${userProfile.expertiseLevel ?? "beginner"}
+- Bank cards for discount calculation: ${userProfile.savedCards?.join(", ") || "none"}
+- UPI apps: ${userProfile.upiPreferences?.join(", ") || "none"}
+
+Personalise all recommendations, pros/cons, and education depth to this profile.`;
+
+    // Log start (non-blocking)
+    logStep({ sessionId, agentName: "researcher", step: "start", input: messages.at(-1)?.content, status: "running" });
+
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-4-5",
       max_tokens: 4096,
-      system: SYSTEM_PROMPT + "\n\n" + profileContext,
-      tools: [
-        {
-          type: "web_search_20250305" as Anthropic.Tool["type"],
-          name: "web_search",
-        } as Anthropic.Tool,
-      ],
+      system: SYSTEM_PROMPT + profileContext,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
 
-    // Extract text content
-    let resultText = "";
-    for (const block of response.content) {
-      if (block.type === "text") {
-        resultText = block.text;
-        break;
-      }
-    }
+    const rawText = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as Anthropic.TextBlock).text)
+      .join("");
 
-    // Log completion
-    await convex.mutation(api.searches.logAgentStep, {
+    console.log("[research] Raw response:", rawText.slice(0, 200));
+
+    const jsonStr = extractJson(rawText);
+    const parsed = JSON.parse(jsonStr);
+
+    // Log completion (non-blocking)
+    logStep({
       sessionId,
       agentName: "researcher",
       step: "complete",
-      output: resultText.slice(0, 500),
+      output: jsonStr.slice(0, 500),
       tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
       durationMs: Date.now() - startTime,
       status: "complete",
     });
 
-    // Parse and validate JSON
-    const parsed = JSON.parse(resultText);
     return Response.json(parsed);
   } catch (err) {
-    await convex.mutation(api.searches.logAgentStep, {
-      sessionId,
-      agentName: "researcher",
-      step: "error",
-      output: String(err),
-      durationMs: Date.now() - startTime,
-      status: "error",
-    });
-
-    return Response.json(
-      { error: "Research failed. Please try again.", phase: "error" },
-      { status: 500 }
-    );
+    console.error("[research] Error:", err);
+    logStep({ sessionId, agentName: "researcher", step: "error", output: String(err), durationMs: Date.now() - startTime, status: "error" });
+    return Response.json({ error: "Research failed. Please try again.", phase: "error" }, { status: 500 });
   }
 }
