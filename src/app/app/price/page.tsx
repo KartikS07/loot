@@ -145,7 +145,10 @@ function PricePage() {
 
   useEffect(() => {
     if (!loading) return;
-    const id = setInterval(() => setLoadingMsg((i) => (i + 1) % LOADING_MESSAGES.length), 2200);
+    setLoadingMsg(0); // reset to start when loading begins
+    const id = setInterval(() => {
+      setLoadingMsg((i) => Math.min(i + 1, LOADING_MESSAGES.length - 1)); // stop at last, never loop
+    }, 2500);
     return () => clearInterval(id);
   }, [loading]);
 

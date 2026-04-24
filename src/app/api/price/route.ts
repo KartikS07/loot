@@ -2,6 +2,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 
+// Two Gemini calls in sequence — needs up to 120s on Vercel
+export const maxDuration = 120;
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const MODEL = "gemini-2.5-flash";
 
@@ -33,17 +36,51 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
+// Race a promise against a timeout — prevents Gemini calls from hanging for 2+ minutes
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
+
 // Repair common Gemini JSON issues before parse
 function repairAndParseJson(text: string): unknown {
   // Remove JS-style comments
   let s = text.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  // Remove trailing commas before } or ]
-  s = s.replace(/,(\s*[}\]])/g, "$1");
   // Find JSON object boundaries
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON object found in response");
-  return JSON.parse(s.slice(start, end + 1));
+
+  let json = s.slice(start, end + 1);
+
+  // 1. Strip ALL raw control chars (including \n \r inside string values, e.g. URLs).
+  //    JSON.parse doesn't require whitespace between tokens, so this is safe.
+  json = json.replace(/[\x00-\x1F\x7F]/g, "");
+
+  // 2. Remove trailing commas before } or ]
+  json = json.replace(/,(\s*[}\]])/g, "$1");
+
+  // 3. Add missing commas between adjacent values and the next key or value.
+  //    Gemini 2.5 Flash occasionally omits commas between object properties.
+  //    Use \s* (not \s+) because after stripping \n there may be ZERO whitespace
+  //    between a value-end char and the next key/value start.
+  json = json.replace(/(["}\]0-9]|true|false|null)(\s*)("|\{|\[)/g, "$1,$3");
+
+  try {
+    return JSON.parse(json);
+  } catch (e) {
+    // Log chars around error position so we can diagnose the exact malformation
+    const m = (e as Error).message.match(/position (\d+)/);
+    if (m) {
+      const pos = parseInt(m[1]);
+      console.log("[price] JSON error at pos", pos, "context:", JSON.stringify(json.slice(Math.max(0, pos - 40), pos + 40)));
+    }
+    throw e;
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,7 +145,12 @@ For each platform — Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq
 Also report: all-time low price, and any Indian sale events in the next 30 days.
 Only report data you find from actual search results. Do not guess or estimate.`;
 
-    const searchResult = await searchModel.generateContent(searchPrompt);
+    // 75s timeout — prevents the 2-minute hang when Gemini search is slow
+    const searchResult = await withTimeout(
+      searchModel.generateContent(searchPrompt),
+      75000,
+      "Phase 1 search"
+    );
     const rawPriceData = searchResult.response.text();
     // Strip markdown and cap at 4000 chars — Phase 2 doesn't need the full essay
     const cleanPriceData = stripMarkdown(rawPriceData).slice(0, 4000);
@@ -138,7 +180,8 @@ Only report data you find from actual search results. Do not guess or estimate.`
       generationConfig: phase2Config,
     });
 
-    // Deliberately simple schema — fewer nested levels = less chance of malformation
+    // IMPORTANT: Phase 2 must produce minified JSON — no line breaks inside string values.
+    // Raw newlines in URLs or descriptions cause "Bad control character" JSON parse errors.
     const structurePrompt = `Convert this price data into JSON. Respond with ONLY the JSON object, nothing else.
 
 Price data:
@@ -158,15 +201,13 @@ Required JSON structure:
       "inStock": true,
       "deliveryEta": "string",
       "sellerTrust": "string",
-      "returnPolicy": "string",
-      "productUrl": "direct product page URL found in search data, or null if not found"
+      "returnPolicy": "string"
     }
   ],
   "verdict": {
     "action": "buy_now",
     "bestPlatform": "string",
     "bestEffectivePrice": "₹X,XXX",
-    "buyUrl": "direct URL to buy on best platform — same as productUrl of the best platform",
     "savings": "string",
     "reason": "string",
     "waitUntil": null,
@@ -180,14 +221,17 @@ Required JSON structure:
 Rules:
 - listedPrice = the current discounted selling price (the number users pay). NEVER use MRP. If you see ₹71,000 and ₹85,000 for the same platform, use ₹71,000.
 - inStock = true if the platform shows a live price (assume purchasable). Set false ONLY when search data explicitly says "out of stock", "unavailable", or "sold out".
-- productUrl = paste the actual product page URL from the search data. If multiple URLs found, use the most specific one. If not found, set null.
 - Include only platforms with actual prices. Skip platforms with no data.
 - Sort platforms by effectivePrice ascending.
 - effectivePrice = listedPrice minus applicable ${cards} discount and ${upi} cashback.
 - effectivePrice must never be less than 80% of listedPrice (cap discount at 20%).
 - verdict.action = "wait" only if a confirmed sale within 15 days will drop price >10%, otherwise "buy_now".`;
 
-    const structureResult = await structureModel.generateContent(structurePrompt);
+    const structureResult = await withTimeout(
+      structureModel.generateContent(structurePrompt),
+      30000,
+      "Phase 2 structure"
+    );
     const jsonText = structureResult.response.text();
 
     console.log("[price] Phase 2 JSON preview:", jsonText.slice(0, 150));
