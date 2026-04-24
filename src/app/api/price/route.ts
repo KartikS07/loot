@@ -110,8 +110,7 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
     url.searchParams.set("type", "search");
     url.searchParams.set("amazon_domain", "amazon.in");
     url.searchParams.set("search_term", product);
-    url.searchParams.set("sort_by", "relevance");
-    url.searchParams.set("max_page", "1");
+    url.searchParams.set("page", "1");
 
     const res = await withTimeout(fetch(url.toString()), 15000, "Rainforest API");
     if (!res.ok) {
@@ -123,9 +122,28 @@ async function fetchAmazonPrice(product: string): Promise<RainforestResult | nul
     const results = data?.search_results ?? [];
     if (!results.length) return null;
 
-    // Pick the first in-stock result with a price
-    const match = results.find((r: Record<string, unknown>) => r.price && (r.is_prime || true));
+    // Score each result by word overlap with the product name.
+    // Uses word-set matching (not substring) so "buds" won't match "earbuds",
+    // and keeps short numeric tokens (e.g. "5" distinguishes "Air 5" from "Air 7").
+    const productTokens = product.toLowerCase()
+      .replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(w => w.length >= 1);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withPrices = results.filter((r: any) => typeof r.price?.value === "number");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scored = withPrices.map((r: any) => {
+      const titleWords = new Set(
+        String(r.title ?? "").toLowerCase().replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(w => w.length >= 1)
+      );
+      const hits = productTokens.filter(t => titleWords.has(t)).length;
+      return { r, score: hits / productTokens.length };
+    }).sort((a: { r: unknown; score: number }, b: { r: unknown; score: number }) => b.score - a.score);
+
+    const match = scored[0]?.r ?? null;
     if (!match) return null;
+
+    console.log(`[price] Rainforest best match: "${String(match.title).slice(0, 50)}" score=${scored[0].score.toFixed(2)} price=₹${match.price?.value}`);
 
     const priceVal = (match.price as Record<string, unknown>)?.value;
     const priceStr = priceVal ? `₹${Math.round(Number(priceVal)).toLocaleString("en-IN")}` : null;
