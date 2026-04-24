@@ -22,29 +22,40 @@ async function logStep(params: {
   } catch { /* non-fatal */ }
 }
 
-function extractJson(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON in response");
-  return text.slice(start, end + 1);
+// Strip markdown formatting that pollutes the price data context
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")  // **bold** → bold
+    .replace(/\*([^*]+)\*/g, "$1")       // *italic* → italic
+    .replace(/#{1,6}\s+/gm, "")          // ## headers
+    .replace(/`{1,3}[^`]*`{1,3}/g, "")  // `code`
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [link](url) → link
+    .trim();
 }
 
-// Gemini sometimes returns {} instead of null for optional fields. Fix recursively.
-// Also validates that effectivePrice <= listedPrice (catches hallucinated discounts).
+// Repair common Gemini JSON issues before parse
+function repairAndParseJson(text: string): unknown {
+  // Remove JS-style comments
+  let s = text.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  // Remove trailing commas before } or ]
+  s = s.replace(/,(\s*[}\]])/g, "$1");
+  // Find JSON object boundaries
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("No JSON object found in response");
+  return JSON.parse(s.slice(start, end + 1));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function sanitize(obj: any): any {
   if (Array.isArray(obj)) return obj.map(sanitize);
   if (obj !== null && typeof obj === "object") {
-    if (Object.keys(obj).length === 0) return null; // {} → null
+    if (Object.keys(obj).length === 0) return null;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k] = sanitize(v);
-    }
-    // Validate price logic: effectivePrice should never be dramatically lower than listedPrice
+    for (const [k, v] of Object.entries(obj)) out[k] = sanitize(v);
     if (out.listedPrice && out.effectivePrice) {
       const listed = parseInt(String(out.listedPrice).replace(/[^0-9]/g, ""));
       const effective = parseInt(String(out.effectivePrice).replace(/[^0-9]/g, ""));
-      // If effective is less than 50% of listed, something is wrong — trust listedPrice
       if (listed > 0 && effective < listed * 0.5) {
         out.effectivePrice = out.listedPrice;
         out.savings = "₹0";
@@ -56,53 +67,6 @@ function sanitize(obj: any): any {
   return obj;
 }
 
-const PRICE_SYSTEM_PROMPT = `You are Loot's Price Optimizer — India's sharpest price intelligence agent. Your job: find the real effective price of a product across all major Indian platforms after applying the user's bank card and UPI discounts.
-
-Use your search capability to find current prices on Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales, Blinkit, and the brand's official India website.
-
-Respond with ONLY a valid JSON object. No markdown, no explanation, no text outside JSON.
-
-JSON schema:
-{
-  "product": "Full product name with model",
-  "searchedAt": "today's date",
-  "platforms": [
-    {
-      "name": "platform name",
-      "listedPrice": "₹XX,XXX",
-      "effectivePrice": "₹XX,XXX",
-      "savings": "₹X,XXX",
-      "discountApplied": "HDFC 10% off + coupon SAVE10 = ₹X,XXX off",
-      "couponCode": "code or null",
-      "inStock": true,
-      "deliveryEta": "Tomorrow / 2-3 days / Same day etc",
-      "sellerTrust": "Brand authorized / Marketplace seller",
-      "returnPolicy": "10-day / 7-day / No return"
-    }
-  ],
-  "verdict": {
-    "action": "buy_now" | "wait",
-    "bestPlatform": "platform name",
-    "bestEffectivePrice": "₹XX,XXX",
-    "savings": "₹X,XXX saved vs market average",
-    "reason": "clear 1-2 sentence reason for buy_now or wait",
-    "waitUntil": "date or event name if action=wait, else null",
-    "expectedWaitPrice": "₹XX,XXX if waiting makes sense, else null"
-  },
-  "priceContext": "1-2 sentences on whether current price is good historically",
-  "atl": "All-time low: ₹XX,XXX on [platform] in [month year] — or 'Not enough data'",
-  "upcomingSales": ["sale name and approximate date if known"]
-}
-
-Rules:
-- Search for actual current prices. Do not make up prices.
-- platforms array: include all platforms where you find the product in stock. Sort by effectivePrice ascending.
-- effectivePrice = listedPrice minus all applicable discounts for this user's cards/UPI.
-- If a platform is out of stock, still include it with inStock: false and effectivePrice = listedPrice.
-- verdict.action = "wait" only if a major sale is within 15 days AND historical discount is >10%.
-- Be decisive. Users need a clear answer, not "it depends".
-- If you cannot find prices for a platform, omit it rather than guessing.`;
-
 export async function POST(req: Request) {
   const startTime = Date.now();
   const sessionId = `price_${Date.now()}`;
@@ -110,59 +74,134 @@ export async function POST(req: Request) {
   try {
     const { product, userProfile } = await req.json() as {
       product: string;
-      userProfile: {
-        persona?: string;
-        savedCards?: string[];
-        upiPreferences?: string[];
-      };
+      userProfile: { savedCards?: string[]; upiPreferences?: string[] };
     };
 
-    const profileContext = `\nUser's payment instruments for discount calculation:
-- Bank cards: ${userProfile.savedCards?.join(", ") || "none specified"}
-- UPI apps: ${userProfile.upiPreferences?.join(", ") || "none"}
-Apply ONLY discounts applicable to these specific cards/UPI apps. If no cards specified, show base price only.`;
+    const cards = userProfile.savedCards?.join(", ") || "none";
+    const upi = userProfile.upiPreferences?.join(", ") || "none";
 
-    logStep({ sessionId, agentName: "price_optimizer", step: "start", input: product, status: "running" });
+    logStep({ sessionId, agentName: "price_optimizer", step: "search_start", input: product, status: "running" });
 
-    // Price optimizer uses Google Search grounding for real-time data
-    const model = genAI.getGenerativeModel({
+    // ── Phase 1: Google Search grounding — gets real-time price data as prose ──
+    const searchModel = genAI.getGenerativeModel({
       model: MODEL,
-      systemInstruction: PRICE_SYSTEM_PROMPT + profileContext,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       tools: [{ googleSearch: {} } as any],
-      generationConfig: {
-        maxOutputTokens: 4096,
-        temperature: 0.1, // Very low temp for factual price data
-      },
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
     });
 
-    const prompt = `Find current prices for: ${product}
+    const searchPrompt = `Find the current retail price of "${product}" in India today.
 
-Search Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, and other major Indian platforms right now.
-Apply the user's bank card discounts (${userProfile.savedCards?.join(", ") || "none"}) and UPI cashback (${userProfile.upiPreferences?.join(", ") || "none"}) to compute effective prices.
-Give a decisive buy-now-or-wait verdict.
+For each of these platforms — Amazon India, Flipkart, Croma, Reliance Digital, Tata Cliq, Vijay Sales — report:
+- Exact listed/selling price in rupees
+- Any active bank card offer for: ${cards}
+- Any UPI cashback for: ${upi}
+- In stock: yes/no
+- Delivery time
+- Return policy
 
-Return ONLY the JSON object.`;
+Also report the all-time low price and any Indian sale events expected in the next 30 days.
+Only report prices you actually find. Do not estimate.`;
 
-    const result = await model.generateContent(prompt);
-    const rawText = result.response.text();
+    const searchResult = await searchModel.generateContent(searchPrompt);
+    const rawPriceData = searchResult.response.text();
+    // Strip markdown and cap at 4000 chars — Phase 2 doesn't need the full essay
+    const cleanPriceData = stripMarkdown(rawPriceData).slice(0, 4000);
 
-    console.log("[price] Raw response preview:", rawText.slice(0, 200));
+    console.log("[price] Phase 1 complete, chars:", cleanPriceData.length, "| preview:", cleanPriceData.slice(0, 200));
 
-    const jsonStr = extractJson(rawText);
-    const parsed = sanitize(JSON.parse(jsonStr));
+    if (cleanPriceData.trim().length < 50) throw new Error("Search returned no usable data");
+
+    logStep({
+      sessionId, agentName: "price_optimizer", step: "search_complete",
+      output: cleanPriceData.slice(0, 200), status: "running",
+      durationMs: Date.now() - startTime,
+    });
+
+    // ── Phase 2: JSON structuring — thinking disabled to prevent JSON corruption ──
+    // gemini-2.5-flash with thinking ON leaks reasoning tokens into JSON output.
+    // thinkingBudget:0 disables thinking entirely → clean, valid JSON every time.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const phase2Config: any = {
+      responseMimeType: "application/json",
+      maxOutputTokens: 4096,
+      temperature: 0,
+      thinkingConfig: { thinkingBudget: 0 },
+    };
+    const structureModel = genAI.getGenerativeModel({
+      model: MODEL,
+      generationConfig: phase2Config,
+    });
+
+    // Deliberately simple schema — fewer nested levels = less chance of malformation
+    const structurePrompt = `Convert this price data into JSON. Respond with ONLY the JSON object, nothing else.
+
+Price data:
+${cleanPriceData}
+
+Required JSON structure:
+{
+  "product": "string",
+  "platforms": [
+    {
+      "name": "string",
+      "listedPrice": "₹X,XXX",
+      "effectivePrice": "₹X,XXX",
+      "savings": "₹X,XXX",
+      "discountApplied": "string describing discount or null",
+      "couponCode": "string or null",
+      "inStock": true,
+      "deliveryEta": "string",
+      "sellerTrust": "string",
+      "returnPolicy": "string"
+    }
+  ],
+  "verdict": {
+    "action": "buy_now",
+    "bestPlatform": "string",
+    "bestEffectivePrice": "₹X,XXX",
+    "savings": "string",
+    "reason": "string",
+    "waitUntil": null,
+    "expectedWaitPrice": null
+  },
+  "priceContext": "string",
+  "atl": "string",
+  "upcomingSales": ["string"]
+}
+
+Rules:
+- Include only platforms with actual prices found. Skip platforms with no data.
+- Sort platforms by effectivePrice cheapest first.
+- effectivePrice = listedPrice minus ${cards} card discount and ${upi} UPI cashback if applicable.
+- effectivePrice must never be less than 50% of listedPrice.
+- verdict.action is "wait" only if a major sale within 15 days will drop price by more than 10%, otherwise "buy_now".
+- User's cards: ${cards}. User's UPI: ${upi}.`;
+
+    const structureResult = await structureModel.generateContent(structurePrompt);
+    const jsonText = structureResult.response.text();
+
+    console.log("[price] Phase 2 JSON preview:", jsonText.slice(0, 150));
+
+    if (!jsonText || jsonText.trim().length < 10) {
+      throw new Error("Phase 2 returned empty response — context may be too large");
+    }
+
+    // repairAndParseJson handles trailing commas, JS comments, and finds {…} boundaries
+    const parsed = sanitize(repairAndParseJson(jsonText));
 
     logStep({
       sessionId, agentName: "price_optimizer", step: "complete",
-      output: jsonStr.slice(0, 300),
-      tokensUsed: result.response.usageMetadata?.totalTokenCount,
-      durationMs: Date.now() - startTime, status: "complete",
+      output: jsonText.slice(0, 200), status: "complete",
+      tokensUsed: (searchResult.response.usageMetadata?.totalTokenCount ?? 0) +
+                  (structureResult.response.usageMetadata?.totalTokenCount ?? 0),
+      durationMs: Date.now() - startTime,
     });
 
     return Response.json(parsed);
   } catch (err) {
-    console.error("[price] Error:", err);
+    console.error("[price] Error:", String(err).slice(0, 300));
     logStep({ sessionId, agentName: "price_optimizer", step: "error", output: String(err), durationMs: Date.now() - startTime, status: "error" });
-    return Response.json({ error: "Price check failed. Please try again.", }, { status: 500 });
+    return Response.json({ error: "Price check failed. Please try again." }, { status: 500 });
   }
 }
