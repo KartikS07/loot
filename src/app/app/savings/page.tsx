@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 // ── Types ──
@@ -155,6 +155,7 @@ export default function SavingsPage() {
   const [mounted, setMounted] = useState(false);
   const [profile, setProfile] = useState<Record<string, string>>({});
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [sharing, setSharing] = useState(false);
   const [savings, setSavings] = useState<SavingsData>({
     dealsCount: 0, totalDealsFound: 0, confirmedCount: 0, bestDeal: null, recent: [],
   });
@@ -216,18 +217,79 @@ export default function SavingsPage() {
     .filter(d => !d.confirmedPurchase && !d._dismissed)
     .slice(0, 3);
 
-  async function share() {
-    const text = `I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯\n\nNot just a deal. A loot.\n\nloot-eta.vercel.app`;
-    if (navigator.share) {
-      try { await navigator.share({ title: "My Loot Report", text, url: "https://loot-eta.vercel.app" }); return; }
-      catch { /* user cancelled */ }
-    }
-    await navigator.clipboard.writeText(text).catch(() => {});
-    alert("Copied! Share it anywhere.");
-  }
+  const buildShareText = useCallback((suffix = "") =>
+    `I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯${suffix}\n\nNot just a deal. A loot.\n\nloot-eta.vercel.app`,
+  [savings.totalDealsFound]);
 
-  const shareText = (suffix: string) =>
-    encodeURIComponent(`I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯${suffix}\n\nloot-eta.vercel.app`);
+  const shareText = (suffix: string) => encodeURIComponent(buildShareText(suffix));
+
+  // Capture the Loot Report card as a PNG image and share/download it
+  const captureAndShare = useCallback(async (platform?: "whatsapp" | "x" | "linkedin") => {
+    setSharing(true);
+    try {
+      const cardEl = document.getElementById("loot-report-card");
+      if (!cardEl) throw new Error("Card not found");
+
+      // Dynamically import html2canvas so it only loads when needed
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(cardEl, {
+        backgroundColor: "#0a0a0a",
+        scale: 2,        // retina quality
+        useCORS: true,
+        logging: false,
+      });
+
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b!), "image/png", 0.95)
+      );
+      const imageFile = new File([blob], "loot-report.png", { type: "image/png" });
+      const text = buildShareText("\n\nI never overpay anymore.");
+
+      // Platform-specific: X and LinkedIn don't support file sharing via Web Share
+      if (platform === "x") {
+        window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
+        return;
+      }
+      if (platform === "linkedin") {
+        window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent("https://loot-eta.vercel.app")}`, "_blank");
+        return;
+      }
+
+      // WhatsApp + main button: try Web Share API with image (works on mobile)
+      const canShareImage = typeof navigator.share !== "undefined" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare({ files: [imageFile] });
+
+      if (canShareImage) {
+        await navigator.share({ files: [imageFile], title: "My Loot Report", text });
+        return;
+      }
+
+      // Fallback 1: Web Share without image (desktop browsers)
+      if (navigator.share) {
+        await navigator.share({ title: "My Loot Report", text, url: "https://loot-eta.vercel.app" });
+        return;
+      }
+
+      // Fallback 2: download the image + copy text
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "loot-report.png";
+      a.click();
+      URL.revokeObjectURL(url);
+      await navigator.clipboard.writeText(text).catch(() => {});
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") {
+        // User cancelled share — silent
+        const text = buildShareText("");
+        await navigator.clipboard.writeText(text).catch(() => {});
+        alert("Image downloaded! Text copied — paste it when sharing.");
+      }
+    } finally {
+      setSharing(false);
+    }
+  }, [buildShareText]);
 
   if (!mounted) {
     return (
@@ -302,15 +364,17 @@ export default function SavingsPage() {
 
         <div className="w-full max-w-xs space-y-3">
           <button
-            onClick={share}
-            className="w-full bg-amber-400 hover:bg-amber-300 text-black font-black rounded-2xl py-4 text-sm transition-colors"
+            onClick={() => captureAndShare()}
+            disabled={sharing}
+            className="w-full bg-amber-400 hover:bg-amber-300 text-black font-black rounded-2xl py-4 text-sm transition-colors disabled:opacity-60"
           >
-            Share my Loot Report →
+            {sharing ? "Capturing card..." : "Share my Loot Report →"}
           </button>
           <div className="grid grid-cols-3 gap-2">
-            {/* WhatsApp */}
+            {/* WhatsApp — shares card image via Web Share API on mobile */}
             <button
-              onClick={() => window.open(`https://wa.me/?text=${shareText("\n\nI never overpay anymore.")}`, "_blank")}
+              onClick={() => captureAndShare("whatsapp")}
+              disabled={sharing}
               className="flex flex-col items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl py-3 transition-colors"
             >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -319,9 +383,10 @@ export default function SavingsPage() {
               </svg>
               <span className="text-zinc-400 text-xs">WhatsApp</span>
             </button>
-            {/* X (formerly Twitter) */}
+            {/* X */}
             <button
-              onClick={() => window.open(`https://twitter.com/intent/tweet?text=${shareText("")}`, "_blank")}
+              onClick={() => captureAndShare("x")}
+              disabled={sharing}
               className="flex flex-col items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl py-3 transition-colors"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
@@ -331,13 +396,13 @@ export default function SavingsPage() {
             </button>
             {/* LinkedIn */}
             <button
-              onClick={() => window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent("https://loot-eta.vercel.app")}`, "_blank")}
+              onClick={() => captureAndShare("linkedin")}
+              disabled={sharing}
               className="flex flex-col items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl py-3 transition-colors"
             >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="#0A66C2">
                 <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
               </svg>
-              <span className="text-zinc-400 text-xs">LinkedIn</span>
               <span className="text-zinc-400 text-xs">LinkedIn</span>
             </button>
           </div>
