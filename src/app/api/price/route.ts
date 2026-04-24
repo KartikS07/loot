@@ -201,27 +201,42 @@ export async function POST(req: Request) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           tools: [{ googleSearch: {} } as any],
           generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
-        }).generateContent(`Find the CURRENT SELLING PRICE of "${product}" in India right now.
+        }).generateContent(`Find the CURRENT SELLING PRICE of "${product}" across ALL major Indian shopping platforms right now.
 
-Use targeted searches for each platform. Search these specific queries:
-- site:flipkart.com "${product}" to find the Flipkart listing price
-- site:croma.com "${product}" to find the Croma price
-- site:reliancedigital.in "${product}" for Reliance Digital
-- site:tatacliq.com "${product}" for Tata Cliq
+Search each of these platforms specifically:
+
+E-COMMERCE:
+- site:flipkart.com "${product}"
+- site:meesho.com "${product}"
+- site:jiomart.com "${product}"
+
+ELECTRONICS RETAIL:
+- site:croma.com "${product}"
+- site:reliancedigital.in "${product}"
+- site:tatacliq.com "${product}"
+- site:vijaysales.com "${product}"
+
+QUICK COMMERCE (same-day delivery in major Indian cities):
+- site:blinkit.com "${product}"
+- site:zepto.com "${product}"
+- site:swiggy.com instamart "${product}"
+
+Also check the brand's official India website if applicable.
 
 CRITICAL: Report the CURRENT SELLING PRICE (what a buyer pays today), NOT the MRP/strikethrough price.
 
-For each platform found, report:
-1. Current selling price in rupees (the actual checkout price)
-2. The FULL direct product page URL — e.g. flipkart.com/[slug]/p/[itemId] for Flipkart, amazon.in/dp/[ASIN] for Amazon. Include the complete URL in your response so it can be extracted.
-3. In stock status (true unless page explicitly says out of stock)
-4. Any bank card discount for: ${cards}
-5. Any UPI cashback for: ${upi}
-6. Delivery time
-7. Return policy
+For each platform where the product is found, report:
+1. Current selling price in rupees
+2. The FULL direct product page URL (include the complete URL so it can be extracted)
+3. In stock status
+4. For quick commerce (Blinkit/Zepto/Instamart): note it's same-day delivery, city-specific
+5. Any bank card discount for: ${cards}
+6. Any UPI cashback for: ${upi}
+7. Delivery time
+8. Return policy
 
-Also report: all-time low price for this product, and Indian sale events expected in the next 30 days.
-Only report data you find from actual platform pages. Do not guess.`),
+Also report: all-time low price and any Indian sale events in the next 30 days.
+Only report data you actually find. Do not guess or estimate prices.`),
         75000,
         "Phase 1 search"
       ),
@@ -229,7 +244,7 @@ Only report data you find from actual platform pages. Do not guess.`),
 
     const amazonResult = amazonData.status === "fulfilled" ? amazonData.value : null;
     const rawPriceData = searchResult.status === "fulfilled"
-      ? stripMarkdown(searchResult.value.response.text()).slice(0, 4000)
+      ? stripMarkdown(searchResult.value.response.text()).slice(0, 8000)
       : "";
 
     console.log("[price] Rainforest Amazon:", amazonResult ? amazonResult.price : "not available");
@@ -348,6 +363,18 @@ Rules:
     // Croma: /p/{productId}
     const cromaUrl = rawPriceData.match(/https?:\/\/(?:www\.)?croma\.com\/[^\s"'<)]+\/p\/\d+/i);
     if (cromaUrl) directLinks["Croma"] = cromaUrl[0].split(/[?#]/)[0];
+
+    // Blinkit product page
+    const blinkitUrl = rawPriceData.match(/https?:\/\/(?:www\.)?blinkit\.com\/prn\/[^\s"'<)]+/i);
+    if (blinkitUrl) directLinks["Blinkit"] = blinkitUrl[0].split(/[?#]/)[0];
+
+    // Zepto product page
+    const zeptoUrl = rawPriceData.match(/https?:\/\/(?:www\.)?zepto\.com\/pn\/[^\s"'<)]+/i);
+    if (zeptoUrl) directLinks["Zepto"] = zeptoUrl[0].split(/[?#]/)[0];
+
+    // Meesho product page
+    const meeshoUrl = rawPriceData.match(/https?:\/\/(?:www\.)?meesho\.com\/[^\s"'<)]+\/p\/\d+/i);
+    if (meeshoUrl) directLinks["Meesho"] = meeshoUrl[0].split(/[?#]/)[0];
 
     console.log("[price] Direct links found:", Object.keys(directLinks).join(", ") || "none");
 

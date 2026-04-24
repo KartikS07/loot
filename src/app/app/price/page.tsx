@@ -38,14 +38,20 @@ interface PriceResult {
 
 // Fallback search URLs when Gemini can't find the direct product page
 const PLATFORM_SEARCH: Record<string, (q: string) => string> = {
+  // E-commerce
   "Amazon India": (q) => `https://www.amazon.in/s?k=${encodeURIComponent(q)}`,
   "Flipkart": (q) => `https://www.flipkart.com/search?q=${encodeURIComponent(q)}`,
+  "Meesho": (q) => `https://www.meesho.com/search?q=${encodeURIComponent(q)}`,
+  "JioMart": (q) => `https://www.jiomart.com/search#q=${encodeURIComponent(q)}`,
+  // Electronics retail
   "Croma": (q) => `https://www.croma.com/searchB?q=${encodeURIComponent(q)}`,
   "Reliance Digital": (q) => `https://www.reliancedigital.in/search?q=${encodeURIComponent(q)}`,
   "Tata Cliq": (q) => `https://www.tatacliq.com/search/?searchCategory=all&text=${encodeURIComponent(q)}`,
   "Vijay Sales": (q) => `https://www.vijaysales.com/search/${encodeURIComponent(q)}`,
+  // Quick commerce (same-day, major cities)
   "Blinkit": (q) => `https://blinkit.com/s/?q=${encodeURIComponent(q)}`,
   "Zepto": (q) => `https://www.zepto.com/search?query=${encodeURIComponent(q)}`,
+  "Swiggy Instamart": (q) => `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(q)}`,
 };
 
 function getPlatformUrl(
