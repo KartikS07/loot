@@ -133,6 +133,28 @@ Quotes / verbatim feedback: [YOU — capture from Telegram conversation. Probe: 
 - `tip_paid` PostHog event missed for Kartik's own ₹49 — fired from a mobile context (UPI flow) where PostHog beacon couldn't reach the wire. Razorpay + Convex both have the payment; only the analytics event is missing. Not a code bug.
 - Pre-decimal-fix `deals` entries inflate `totalDealsFound` slightly. Tier 4 cleanup, not blocking.
 
+### Saturday afternoon → 26 April 2026 morning (submission + Phase 2)
+
+**Submission filed at GrowthX in the afternoon.** Self-graded score returned with a 4-hour deadline extension. Phase 2 framing from the platform: "Stop building. Spend these 4 hours making what already exists provable." Evidence is the gap, not features.
+
+**Documentation pass:**
+- weekender.md filled with right-to-win section, SOM rewritten with Bain & Flipkart "How India Shops Online 2025" citation (SAM 8M, SOM 80K users × ₹240 ARPU = ₹19.2cr/year, monetization roadmap committed in writing).
+- LinkedIn launch post drafts written (3 variants in `launch_post_drafts.md`), scheduled for Monday morning IST.
+- GrowthX submission pack drafted in `submission_pack.md` (kept local, gitignored — contains drafted answers + honest caveats).
+
+**Git hygiene caught up.** Discovered the entire session 2/3 build had been deployed via `vercel deploy` directly from local without going through git. 5 catch-up commits pushed (`b16dbf1`, `392c23b`, `1ab284c`, `af30c2f`, `1ad42f5`). Installed a project-local PreToolUse Bash hook in `.claude/settings.local.json` (gitignored) that warns on `vercel deploy/redeploy/--prod` with uncommitted changes.
+
+**Phase 2 priorities (next 4 hours, evidence not features):**
+1. Get Prateek (pkvk.ml@gmail.com) to pay ₹199 — direct Telegram ask. One paying stranger = pain_severity L3 → L4 + a real quote.
+2. Record a 90-second screen capture (onboarding → research → price → savings card → Razorpay). Upload as `demo_video_url`.
+3. Share a PostHog read-only link in the submission. Currently "14 unique users" + "Prateek's 10-min path" are unverifiable claims.
+4. Post the savings card with tier escalation on X with a "built in 4 days" hook. The screenshot moment that hasn't been distributed.
+5. Drop the Loot link in the "Extensive Agentic Generation" Telegram channel where Prateek came from.
+6. Add visitor count + PostHog URL to the submission (dual-track: Revenue + Virality).
+7. Add one sentence on the Gemini grounding response chain to the submission (MaaS legibility).
+8. Name the observability setup (12 PostHog events + Convex feedback widget) in two sentences in the submission.
+9. Screenshot one PostHog funnel / session replay (Prateek's 10-min path) and include in the submission.
+
 ---
 
 ## known gaps going into Saturday
