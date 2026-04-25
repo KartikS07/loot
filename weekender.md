@@ -92,7 +92,8 @@ Quotes / verbatim feedback: [YOU — capture from Telegram conversation. Probe: 
 - [x] PostHog / analytics tracking wired for signups + sessions (12 events firing, project ID 396779)
 - [x] weekender.md metrics filled in (current pass — 2026-04-25)
 - [ ] First user interviewed (Prateek on Telegram + Amol in person)
-- [ ] Submission form submitted by Saturday 8pm
+- [x] Submission form submitted (2026-04-26 afternoon; 4-hour extension granted)
+- [ ] Phase 2 evidence pass (4-hour extension): demo video, PostHog read-only link, X post with savings card, Telegram drop, Prateek ₹199 ask, observability description in submission
 
 ---
 
