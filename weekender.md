@@ -87,7 +87,8 @@ Quotes / verbatim feedback: [YOU — capture from Telegram conversation. Probe: 
 ## submission checklist
 
 - [x] Razorpay KYC approved + wired (live keys swapped 2026-04-25; ₹49 e2e capture verified)
-- [ ] Launch post live on LinkedIn (copy drafted in session)
+- [x] Launch post drafts written (3 variants in `launch_post_drafts.md` — pragmatic / story-led / contrarian)
+- [ ] Launch post live on LinkedIn (scheduled Monday morning IST for algorithmic reach)
 - [x] PostHog / analytics tracking wired for signups + sessions (12 events firing, project ID 396779)
 - [x] weekender.md metrics filled in (current pass — 2026-04-25)
 - [ ] First user interviewed (Prateek on Telegram + Amol in person)
