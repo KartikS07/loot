@@ -192,13 +192,16 @@ Justification for 1%: organic distribution channels already touched (X post + co
 
 ## right to win
 
-[YOU — fill in: what is your unfair advantage on this specific problem?]
+Three pillars, in order of how hard each is for someone else to copy:
 
-Suggested angles:
-- Deep knowledge of Indian e-commerce (AB InBev Clara team context)
-- Personal pain: you've spent hours comparing prices and still overpaid
-- Product thinking: PRD quality reflects domain knowledge
-- Network: GrowthX community = exact target user
+**1. Lived expertise — I'm the "deal guy" in my own network.**
+Friends and family come to me before any meaningful online purchase, and have for years. Last September I fit out an entire new house — electronics + home appliances — across Flipkart Big Billion Day and Amazon Great Indian Sale, and saved meaningfully on every category. Loot encodes taste I've earned by doing this for myself; I'm not building from a market-research deck.
+
+**2. The pain is mine — Loot exists because existing AI tools failed me.**
+During that same house fit-out I ran deep researches across Claude, ChatGPT, and Perplexity, built my own custom prompts and skills, and *still* kept repeating the same query patterns query after query. The work was high-leverage (real money saved) but the tools were broken for the way I needed to use them. That's the moment Loot was conceived. It's not a hypothesis about a market — it's the fix for my own life, that turns out to generalize.
+
+**3. Feedback-loop velocity, not pure first-mover.**
+A well-funded clone team can copy the surface in 30 days. What they can't replicate in 30 days is the iteration speed of a product instrumented from day one — PostHog across 12 events, Convex `feedback` widget live, deal logging tied to identified users, identified-user journeys (within 4 hours of PostHog going live we already had Prateek's full 10-minute path captured: 6 research_runs, 2 product drilldowns, exact products, exact pacing). Every user shapes the next ship. Cloners chase the artifact; I chase the user. The gap widens weekly.
 
 ---
 
