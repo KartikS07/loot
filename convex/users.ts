@@ -36,6 +36,7 @@ export const upsert = mutation({
       upiPreferences: args.upiPreferences,
       totalSaved: 0,
       searchCount: 0,
+      premiumTier: "none",
       createdAt: Date.now(),
     });
   },
@@ -48,5 +49,20 @@ export const getByEmail = query({
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .first();
+  },
+});
+
+export const getPremiumStatus = query({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .first();
+    return {
+      isPremium: user?.premiumTier === "lifetime",
+      tier: user?.premiumTier ?? "none",
+      unlockedAt: user?.premiumUnlockedAt ?? null,
+    };
   },
 });

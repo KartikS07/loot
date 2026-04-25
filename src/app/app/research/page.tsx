@@ -2,8 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
+import { RazorpayCheckoutButton } from "@/components/RazorpayCheckoutButton";
+import { DeepDiveModal } from "@/components/DeepDiveModal";
 import { saveToWishlist } from "@/app/app/wishlist/page";
+import { toast } from "sonner";
+import { track } from "@/lib/analytics";
 
 interface Recommendation {
   rank: number;
@@ -27,6 +33,8 @@ interface ResearchResult {
     insiderTip: string;
   };
   recommendations?: Recommendation[];
+  proTips?: string[];
+  whatReviewsDontTellYou?: string[];
   summary?: string;
   error?: string;
 }
@@ -43,6 +51,11 @@ function getProfile() {
   } catch { return {}; }
 }
 
+function getStoredEmail(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("loot_email") ?? "";
+}
+
 function ScoreBar({ score }: { score: number }) {
   return (
     <div className="flex items-center gap-2">
@@ -57,13 +70,31 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-function ProductCard({ rec, onPriceOptimize }: { rec: Recommendation; onPriceOptimize: (name: string) => void }) {
+function ProductCard({
+  rec,
+  onPriceOptimize,
+  onDeepDive,
+  isPremium,
+}: {
+  rec: Recommendation;
+  onPriceOptimize: (name: string) => void;
+  onDeepDive: (rec: Recommendation) => void;
+  isPremium: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [wishlisted, setWishlisted] = useState(false);
 
   function handleWishlist() {
-    const saved = saveToWishlist({ productName: rec.name, platform: rec.platformHint });
-    if (saved) setWishlisted(true);
+    const result = saveToWishlist({ productName: rec.name, platform: rec.platformHint });
+    if (result.status === "added") {
+      setWishlisted(true);
+      toast.success("Saved to wishlist.");
+    } else if (result.status === "already") {
+      setWishlisted(true);
+      toast("Already in your wishlist.");
+    } else {
+      toast.error("Wishlist is full (50 max). Remove an item first.");
+    }
   }
 
   return (
@@ -157,6 +188,118 @@ function ProductCard({ rec, onPriceOptimize }: { rec: Recommendation; onPriceOpt
             {expanded ? "Less" : "Specs"}
           </button>
         </div>
+
+        {/* Expert Deep Dive — opens modal. Locked icon for non-premium. */}
+        <button
+          onClick={() => onDeepDive(rec)}
+          className={`w-full mt-3 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold transition-all border ${
+            isPremium
+              ? "bg-amber-400/10 border-amber-400/30 text-amber-300 hover:bg-amber-400/15 hover:border-amber-400/50"
+              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-amber-400/30 hover:text-amber-300"
+          }`}
+        >
+          <span>Expert Deep Dive</span>
+          <span>{isPremium ? "↗" : "🔒"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeepModeToggle({
+  isPremium,
+  enabled,
+  onToggle,
+}: {
+  isPremium: boolean;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
+  const active = isPremium && enabled;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      className={`group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+        active
+          ? "bg-amber-400/15 border-amber-400/40 text-amber-300"
+          : isPremium
+            ? "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+            : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-amber-400/30 hover:text-amber-300"
+      }`}
+    >
+      <span
+        className={`inline-block w-6 h-3 rounded-full relative transition-colors ${
+          active ? "bg-amber-400" : "bg-zinc-700"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 w-2 h-2 rounded-full bg-white transition-all ${
+            active ? "left-3.5" : "left-0.5"
+          }`}
+        />
+      </span>
+      <span>
+        {active ? "Deep Mode ✓" : "Go deeper — Premium"}
+      </span>
+      {!isPremium && <span className="text-[10px]">🔒</span>}
+    </button>
+  );
+}
+
+function PremiumPaywallCard({
+  email,
+  onClose,
+  onUnlocked,
+}: {
+  email: string;
+  onClose: () => void;
+  onUnlocked: () => void;
+}) {
+  return (
+    <div className="mt-3 bg-zinc-950 border border-amber-400/30 rounded-2xl p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-amber-400 text-xs font-bold uppercase tracking-widest">
+              Loot Premium
+            </span>
+            <span className="text-[10px] text-zinc-500 bg-zinc-900 border border-zinc-800 rounded-full px-2 py-0.5">
+              ₹199 lifetime
+            </span>
+          </div>
+          <p className="text-zinc-300 text-sm leading-relaxed">
+            Unlocks <span className="text-white font-semibold">Deep Mode</span> (10 picks,
+            long-form buying guide, pro tips, &ldquo;what reviews don&apos;t tell you&rdquo;)
+            plus <span className="text-white font-semibold">Expert Deep Dive</span> on
+            every recommendation. Pay once, yours forever.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-zinc-600 hover:text-zinc-300 text-lg leading-none shrink-0"
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        {email ? (
+          <RazorpayCheckoutButton
+            kind="premium"
+            email={email}
+            label="Unlock Premium — ₹199"
+            className="bg-amber-400 hover:bg-amber-300 text-black font-bold rounded-xl px-5 py-2.5 text-sm transition-colors disabled:opacity-60"
+            onSuccess={() => onUnlocked()}
+          />
+        ) : (
+          <div className="text-xs text-zinc-500">
+            Complete onboarding first — we need your email to link the unlock.
+          </div>
+        )}
+        <span className="text-[11px] text-zinc-600">Secure checkout via Razorpay</span>
       </div>
     </div>
   );
@@ -170,9 +313,36 @@ export default function ResearchPage() {
   const [loading, setLoading] = useState(false);
   const [clarifyInput, setClarifyInput] = useState("");
   const [sessionId] = useState(() => `sess_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const [email, setEmail] = useState("");
+  const [deepModeEnabled, setDeepModeEnabled] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [deepDiveProduct, setDeepDiveProduct] = useState<Recommendation | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Paste-URL flow
+  const [urlInput, setUrlInput] = useState("");
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+
   const profile = typeof window !== "undefined" ? getProfile() : {};
+
+  // Read email once mounted so SSR stays deterministic.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only localStorage hydration is the whole point
+    setEmail(getStoredEmail());
+  }, []);
+
+  // Premium status — skip query until we have an email. Auto-refetches on Convex
+  // mutation (e.g. after a successful Razorpay premium unlock patches users.premiumTier).
+  const premiumStatus = useQuery(
+    api.users.getPremiumStatus,
+    email ? { email } : "skip",
+  );
+  const isPremium = premiumStatus?.isPremium === true;
+
+  // No reset-on-premium-flip effect: server-side /api/research re-checks premium
+  // via Convex and downgrades silently if false. The toggle UI is also disabled
+  // when !isPremium, so deepModeEnabled cannot become invalid in practice.
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -180,6 +350,11 @@ export default function ResearchPage() {
 
   async function runResearch(msgs: Message[]) {
     setLoading(true);
+    track("research_run", {
+      deep: deepModeEnabled && isPremium,
+      messageCount: msgs.length,
+      query: msgs[msgs.length - 1]?.content?.slice(0, 200),
+    });
     try {
       const res = await fetch("/api/research", {
         method: "POST",
@@ -188,10 +363,16 @@ export default function ResearchPage() {
           messages: msgs,
           userProfile: profile,
           sessionId,
+          deep: deepModeEnabled && isPremium,
+          email,
         }),
       });
       const data: ResearchResult = await res.json();
       setResult(data);
+      track("research_result", {
+        phase: data.phase,
+        recommendationsCount: data.recommendations?.length ?? 0,
+      });
 
       if (data.phase === "clarify" && data.clarifyQuestion) {
         setMessages((prev) => [
@@ -200,7 +381,7 @@ export default function ResearchPage() {
         ]);
       }
     } catch {
-      setResult({ phase: "error", error: "Something went wrong. Try again." });
+      setResult({ phase: "error", error: "Couldn't fetch recommendations. The model may be busy — try again in a moment." });
     } finally {
       setLoading(false);
     }
@@ -228,7 +409,44 @@ export default function ResearchPage() {
   }
 
   function handlePriceOptimize(productName: string) {
+    track("price_check_from_research", { productName: productName.slice(0, 200) });
     router.push(`/app/price?product=${encodeURIComponent(productName)}`);
+  }
+
+  async function handleUrlSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const url = urlInput.trim();
+    if (!url || urlLoading) return;
+    setUrlError(null);
+    setUrlLoading(true);
+    try {
+      const res = await fetch("/api/url-research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = (await res.json()) as {
+        productName?: string;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok || !data.productName) {
+        setUrlError(
+          data.message ?? "Couldn't read that URL — try searching by name instead.",
+        );
+        setUrlLoading(false);
+        return;
+      }
+      // Skip the research step — jump straight to the price page.
+      router.push(`/app/price?product=${encodeURIComponent(data.productName)}`);
+    } catch {
+      setUrlError("Couldn't read that URL — try searching by name instead.");
+      setUrlLoading(false);
+    }
+  }
+
+  function handleDeepDive(rec: Recommendation) {
+    setDeepDiveProduct(rec);
   }
 
   const showSearch = messages.length === 0;
@@ -265,6 +483,41 @@ export default function ResearchPage() {
               Search
             </button>
           </div>
+
+          {/* Deep Mode toggle row */}
+          <div className="mt-3 flex items-center gap-3">
+            <DeepModeToggle
+              isPremium={isPremium}
+              enabled={deepModeEnabled}
+              onToggle={() => {
+                if (isPremium) {
+                  setDeepModeEnabled((v) => !v);
+                } else {
+                  setShowPaywall((v) => !v);
+                }
+              }}
+            />
+            {isPremium && deepModeEnabled && (
+              <span className="text-[11px] text-zinc-500">
+                10 picks · long-form guide · pro tips
+              </span>
+            )}
+          </div>
+
+          {/* Paywall card (non-premium, toggle clicked) */}
+          {!isPremium && showPaywall && (
+            <PremiumPaywallCard
+              email={email}
+              onClose={() => setShowPaywall(false)}
+              onUnlocked={() => {
+                // Convex query auto-refetches on users.premiumTier change.
+                // Close the card immediately — toggle re-renders as active next tick.
+                setShowPaywall(false);
+                setDeepModeEnabled(true);
+              }}
+            />
+          )}
+
           <div className="flex flex-wrap gap-2 mt-4">
             {[
               "Best budget TWS earphones under ₹3,000",
@@ -283,6 +536,69 @@ export default function ResearchPage() {
             ))}
           </div>
         </form>
+      )}
+
+      {/* Paste-URL shortcut — skips research, jumps to price page */}
+      {showSearch && (
+        <div className="mt-8 pt-6 border-t border-zinc-900">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-zinc-500 text-xs font-semibold uppercase tracking-widest">
+              …or paste a product URL
+            </span>
+            <span className="text-[10px] text-zinc-600">
+              Amazon, Flipkart, Croma — we&apos;ll jump straight to prices
+            </span>
+          </div>
+          <form onSubmit={handleUrlSubmit}>
+            <div className="flex gap-3">
+              <input
+                type="url"
+                inputMode="url"
+                value={urlInput}
+                onChange={(e) => {
+                  setUrlInput(e.target.value);
+                  if (urlError) setUrlError(null);
+                }}
+                placeholder="https://www.amazon.in/…"
+                maxLength={2000}
+                disabled={urlLoading}
+                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/10 transition-all disabled:opacity-60"
+              />
+              <button
+                type="submit"
+                disabled={!urlInput.trim() || urlLoading}
+                className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold rounded-2xl px-5 py-3 text-sm transition-colors disabled:opacity-40"
+              >
+                {urlLoading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="flex gap-0.5">
+                      {[0, 1, 2].map((i) => (
+                        <span
+                          key={i}
+                          className="w-1 h-1 bg-amber-400 rounded-full animate-bounce"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
+                    </span>
+                    Reading URL…
+                  </span>
+                ) : (
+                  "Analyze"
+                )}
+              </button>
+            </div>
+            {urlError && (
+              <div className="mt-3 text-xs text-red-400/80 bg-red-400/5 border border-red-400/20 rounded-xl px-3 py-2">
+                {urlError}
+              </div>
+            )}
+            {urlLoading && !urlError && (
+              <div className="mt-3 text-[11px] text-zinc-500">
+                Extracting product name — this takes a few seconds.
+              </div>
+            )}
+          </form>
+        </div>
       )}
 
       {/* Conversation thread */}
@@ -320,7 +636,11 @@ export default function ResearchPage() {
             ))}
           </div>
           <span className="text-zinc-500 text-sm">
-            {messages.length <= 2 ? "Researching across expert sources..." : "Analysing your answers..."}
+            {deepModeEnabled && isPremium
+              ? "Deep research in progress — this takes longer…"
+              : messages.length <= 2
+                ? "Researching across expert sources..."
+                : "Analysing your answers..."}
           </span>
         </div>
       )}
@@ -390,10 +710,62 @@ export default function ResearchPage() {
             </div>
             <div className="grid gap-4">
               {result.recommendations?.map((rec) => (
-                <ProductCard key={rec.rank} rec={rec} onPriceOptimize={handlePriceOptimize} />
+                <ProductCard
+                  key={rec.rank}
+                  rec={rec}
+                  onPriceOptimize={handlePriceOptimize}
+                  onDeepDive={handleDeepDive}
+                  isPremium={isPremium}
+                />
               ))}
             </div>
           </div>
+
+          {/* Deep Mode extras — only present when premium deep response returns them */}
+          {(result.proTips?.length || result.whatReviewsDontTellYou?.length) ? (
+            <div className="grid md:grid-cols-2 gap-4">
+              {result.proTips && result.proTips.length > 0 && (
+                <div className="bg-zinc-950 border border-amber-400/20 rounded-2xl p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-amber-400 text-xs font-bold uppercase tracking-widest">
+                      Pro tips
+                    </span>
+                    <span className="text-[10px] text-zinc-600 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">
+                      Premium
+                    </span>
+                  </div>
+                  <ul className="space-y-2.5">
+                    {result.proTips.map((t, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-zinc-300 leading-relaxed">
+                        <span className="text-amber-400 shrink-0 mt-0.5">★</span>
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {result.whatReviewsDontTellYou && result.whatReviewsDontTellYou.length > 0 && (
+                <div className="bg-zinc-950 border border-amber-400/20 rounded-2xl p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-amber-400 text-xs font-bold uppercase tracking-widest">
+                      What reviews don&apos;t tell you
+                    </span>
+                    <span className="text-[10px] text-zinc-600 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">
+                      Premium
+                    </span>
+                  </div>
+                  <ul className="space-y-2.5">
+                    {result.whatReviewsDontTellYou.map((t, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-zinc-300 leading-relaxed">
+                        <span className="text-amber-400 shrink-0 mt-0.5">▸</span>
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {/* Feedback after results */}
           <FeedbackWidget
@@ -417,6 +789,25 @@ export default function ResearchPage() {
           </button>
         </div>
       )}
+
+      {/* Expert Deep Dive modal */}
+      <DeepDiveModal
+        open={deepDiveProduct !== null}
+        onOpenChange={(next) => { if (!next) setDeepDiveProduct(null); }}
+        product={
+          deepDiveProduct
+            ? {
+                name: deepDiveProduct.name,
+                specs: deepDiveProduct.specs,
+                pros: deepDiveProduct.pros,
+                cons: deepDiveProduct.cons,
+                tagline: deepDiveProduct.tagline,
+              }
+            : null
+        }
+        email={email}
+        isPremium={isPremium}
+      />
     </div>
   );
 }

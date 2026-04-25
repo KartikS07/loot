@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { joinWaitlist } from "./actions";
+import { identifyUser, track } from "@/lib/analytics";
 
 const PLATFORMS = ["Amazon", "Flipkart", "Croma", "Blinkit", "Zepto", "Meesho", "JioMart", "Vijay Sales", "Reliance Digital", "Tata Cliq", "Swiggy Instamart", "Brand Sites"];
 const BANK_CARDS = ["HDFC", "ICICI", "SBI", "Axis", "Kotak", "IDFC"];
@@ -23,6 +24,8 @@ function WaitlistForm({ source }: { source: string }) {
     if (result.success) {
       setStatus("success");
       setMessage(result.alreadyJoined ? "Already in. We'll ping you." : "You're in. We'll ping you when Loot goes live.");
+      identifyUser(email, { email });
+      track("waitlist_signup", { source, alreadyJoined: Boolean(result.alreadyJoined) });
     } else {
       setStatus("error");
       setMessage(result.error ?? "Something went wrong.");

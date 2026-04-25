@@ -11,8 +11,10 @@ const PERSONA_LABELS: Record<string, string> = {
   brand_loyalist: "Brand Loyalist 🏆",
 };
 
+const SITE_ORIGIN = "https://loot-eta.vercel.app";
+
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
-  const { savings, loots, name, persona } = await searchParams;
+  const { savings, loots, name, persona, best } = await searchParams;
   const savingsNum = parseInt(savings ?? "0") || 0;
   const savingsFormatted = `₹${savingsNum.toLocaleString("en-IN")}`;
   const displayName = name ? `${name}'s` : "My";
@@ -21,19 +23,35 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const title = `${displayName} Loot Report — ${savingsFormatted} in deals found`;
   const description = `${displayName} Loot Report: ${savingsFormatted} in deals across ${loots ?? "0"} products. ${personaLabel}. Not just a deal. A loot.`;
 
+  // Forward params to the OG image route. Without this, Next auto-discovers
+  // /share/opengraph-image and calls it WITHOUT query params, rendering ₹0.
+  const ogParams = new URLSearchParams();
+  if (savings) ogParams.set("savings", savings);
+  if (loots) ogParams.set("loots", loots);
+  if (name) ogParams.set("name", name);
+  if (persona) ogParams.set("persona", persona);
+  if (best) ogParams.set("best", best);
+  const ogImageUrl = `${SITE_ORIGIN}/share/opengraph-image?${ogParams.toString()}`;
+  const canonicalUrl = `${SITE_ORIGIN}/share?${ogParams.toString()}`;
+
   return {
+    metadataBase: new URL(SITE_ORIGIN),
     title,
     description,
     openGraph: {
       title,
       description,
       type: "website",
-      url: "https://loot-eta.vercel.app/share",
+      url: canonicalUrl,
+      images: [
+        { url: ogImageUrl, width: 1200, height: 630, alt: title },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
+      images: [ogImageUrl],
     },
   };
 }

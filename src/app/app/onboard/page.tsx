@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { identifyUser, track } from "@/lib/analytics";
 
 const PERSONAS = [
   { id: "value_hunter", emoji: "🎯", label: "Value Hunter", desc: "Best product for the price. Won't overpay for a brand name." },
@@ -30,6 +31,20 @@ export default function OnboardPage() {
     upiPreferences: [] as string[],
   });
   const [saving, setSaving] = useState(false);
+
+  // If a user lands on /app/onboard but already completed onboarding (e.g. browser back after finishing),
+  // skip them straight to research instead of looping them through the wizard again.
+  useEffect(() => {
+    try {
+      const profile = localStorage.getItem("loot_profile");
+      const email = localStorage.getItem("loot_email");
+      if (profile && email) {
+        router.replace("/app/research");
+      }
+    } catch {
+      // localStorage unavailable (private browsing edge case) — let the user re-onboard
+    }
+  }, [router]);
 
   function toggleCard(card: string) {
     setData((d) => ({
@@ -60,6 +75,18 @@ export default function OnboardPage() {
       // Store email in localStorage for session
       localStorage.setItem("loot_email", data.email);
       localStorage.setItem("loot_profile", JSON.stringify(data));
+      identifyUser(data.email, {
+        email: data.email,
+        name: data.name,
+        persona: data.persona,
+        expertiseLevel: data.expertiseLevel,
+      });
+      track("onboarding_complete", {
+        persona: data.persona,
+        expertiseLevel: data.expertiseLevel,
+        savedCardsCount: data.savedCards.length,
+        upiPreferencesCount: data.upiPreferences.length,
+      });
       router.push("/app/research");
     } catch {
       setSaving(false);

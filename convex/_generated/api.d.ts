@@ -10,6 +10,7 @@
 
 import type * as deals from "../deals.js";
 import type * as feedback from "../feedback.js";
+import type * as payments from "../payments.js";
 import type * as savings from "../savings.js";
 import type * as searches from "../searches.js";
 import type * as users from "../users.js";
@@ -24,6 +25,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   deals: typeof deals;
   feedback: typeof feedback;
+  payments: typeof payments;
   savings: typeof savings;
   searches: typeof searches;
   users: typeof users;

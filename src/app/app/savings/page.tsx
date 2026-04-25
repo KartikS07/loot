@@ -1,7 +1,22 @@
 "use client";
 
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { RazorpayCheckoutButton } from "@/components/RazorpayCheckoutButton";
+import { track } from "@/lib/analytics";
+
+// ── Tip Jar config ──
+const TIP_AMOUNTS: { label: string; paise: number }[] = [
+  { label: "₹49", paise: 4900 },
+  { label: "₹99", paise: 9900 },
+  { label: "₹199", paise: 19900 },
+];
+const SUPPORT_EMAIL = "support@loot.app";
+
+type TipFailure = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+};
 
 // ── Types ──
 interface Deal {
@@ -32,7 +47,22 @@ function getProfile() {
 
 function loadDealsFromStorage(): Deal[] {
   try {
-    return JSON.parse(localStorage.getItem("loot_pending_deals") ?? "[]");
+    const raw = JSON.parse(localStorage.getItem("loot_pending_deals") ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    // Coerce numeric fields — older logDeal versions sometimes wrote null/undefined,
+    // which crashed the page on .toLocaleString().
+    return raw
+      .filter((d) => d && typeof d.id === "string" && typeof d.productName === "string")
+      .map((d): Deal => ({
+        id: d.id,
+        productName: d.productName,
+        platform: typeof d.platform === "string" ? d.platform : "",
+        bestPrice: Number.isFinite(d.bestPrice) ? Number(d.bestPrice) : 0,
+        marketHighPrice: Number.isFinite(d.marketHighPrice) ? Number(d.marketHighPrice) : 0,
+        savedVsHighest: Number.isFinite(d.savedVsHighest) ? Number(d.savedVsHighest) : 0,
+        confirmedPurchase: Boolean(d.confirmedPurchase),
+        createdAt: Number.isFinite(d.createdAt) ? Number(d.createdAt) : Date.now(),
+      }));
   } catch { return []; }
 }
 
@@ -63,60 +93,117 @@ interface CardProps {
   bestDeal: string;
 }
 
+// Tier ladder makes the artifact feel like a Spotify Wrapped / GitHub Year-in-Review:
+// users compare their level to their friends' and want to climb.
+function looterTier(dealsCount: number): { title: string; sub: string } {
+  if (dealsCount >= 25) return { title: "Loot Legend", sub: "Top 1% of shoppers" };
+  if (dealsCount >= 10) return { title: "Master Looter", sub: "You don't pay full price" };
+  if (dealsCount >= 5)  return { title: "Pro Looter",   sub: "Caught the bug" };
+  if (dealsCount >= 1)  return { title: "Looter",        sub: "First raid done" };
+  return { title: "Just getting started", sub: "Your first loot is coming" };
+}
+
 function LootReportCard({ name, persona, dealsCount, totalFound, confirmedCount, bestDeal }: CardProps) {
+  const tier = looterTier(dealsCount);
+  const personaLabel = PERSONA_LABELS[persona] ?? "Smart Shopper 🛍️";
+  const tagline = PERSONA_TAGLINES[persona] ?? "Shop smarter. Save more.";
+
   return (
     <div
       id="loot-report-card"
-      className="w-80 bg-[#0a0a0a] border border-zinc-800 rounded-3xl p-6 shadow-2xl shadow-amber-400/5 select-none"
+      className="relative w-[360px] overflow-hidden rounded-3xl select-none"
+      style={{
+        background:
+          "radial-gradient(1200px 200px at 50% -20%, rgba(245, 158, 11, 0.18), transparent 60%), linear-gradient(180deg, #0d0a05 0%, #050505 100%)",
+        boxShadow:
+          "0 30px 60px -20px rgba(245, 158, 11, 0.15), 0 0 0 1px rgba(245, 158, 11, 0.18)",
+      }}
     >
-      <div className="flex items-center justify-between mb-6">
-        <span className="text-amber-400 font-black text-xl tracking-tight">Loot</span>
-        <span className="text-zinc-600 text-xs font-medium">2026 Report</span>
-      </div>
+      {/* Subtle inner glow for depth on screenshot */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-3xl"
+        style={{
+          background:
+            "radial-gradient(800px 100px at 50% 110%, rgba(245, 158, 11, 0.07), transparent 60%)",
+        }}
+      />
 
-      <div className="mb-6">
-        <div className="text-zinc-600 text-xs uppercase tracking-widest mb-1">
-          {name ? `${name}'s` : "My"} Shopping Year
+      <div className="relative p-7">
+        {/* Header: brand + year */}
+        <div className="flex items-center justify-between mb-7">
+          <div className="flex items-baseline gap-2">
+            <span className="text-amber-400 font-black text-2xl tracking-tight leading-none">Loot</span>
+            <span className="text-amber-400/40 text-[11px] font-semibold tracking-[0.2em] uppercase">Report</span>
+          </div>
+          <span className="text-zinc-500 text-[10px] font-semibold tracking-[0.2em] uppercase">2026</span>
         </div>
-        <div className="text-white text-sm font-semibold">
-          {PERSONA_LABELS[persona] ?? "Smart Shopper 🛍️"}
-        </div>
-      </div>
 
-      <div className="mb-5">
-        <div className="text-zinc-600 text-[10px] uppercase tracking-widest mb-1">Deals found</div>
-        <div className="text-white font-black text-5xl leading-none">
-          ₹{totalFound.toLocaleString("en-IN")}
+        {/* Persona chip */}
+        <div className="mb-5">
+          <div className="text-zinc-600 text-[10px] uppercase tracking-[0.2em] mb-2">
+            {name ? `${name}'s` : "My"} year
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/12 border border-amber-400/30 text-amber-300 text-[12px] font-semibold">
+            {personaLabel}
+          </span>
         </div>
-        <div className="text-zinc-500 text-xs mt-1">
-          {confirmedCount > 0
-            ? `${confirmedCount} purchase${confirmedCount > 1 ? "s" : ""} confirmed`
-            : totalFound > 0
-              ? "in bank offers & discounts found"
-              : "use price optimizer to start tracking"}
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-900 mb-4">
-        <div>
-          <div className="text-zinc-600 text-[10px] uppercase tracking-widest mb-1">Loots</div>
-          <div className="text-white font-black text-2xl">{dealsCount}</div>
+        {/* Hero: Deals found */}
+        <div className="mb-6">
+          <div className="text-zinc-500 text-[10px] uppercase tracking-[0.2em] mb-2">Deals found</div>
+          <div
+            className="font-black text-[64px] leading-[0.9] tracking-tight"
+            style={{
+              background: "linear-gradient(180deg, #ffffff 0%, #fbbf24 130%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+              color: "transparent",
+            }}
+          >
+            ₹{(totalFound ?? 0).toLocaleString("en-IN")}
+          </div>
+          <div className="text-zinc-500 text-xs mt-1.5">
+            {confirmedCount > 0
+              ? `${confirmedCount} purchase${confirmedCount > 1 ? "s" : ""} confirmed`
+              : totalFound > 0
+                ? "in bank offers & discounts found"
+                : "use price optimizer to start tracking"}
+          </div>
         </div>
-        <div>
-          <div className="text-zinc-600 text-[10px] uppercase tracking-widest mb-1">Best loot</div>
-          <div className="text-amber-400 font-bold text-sm leading-tight">{bestDeal}</div>
-        </div>
-      </div>
 
-      <div className="pt-4 border-t border-zinc-900">
-        <div className="text-zinc-500 text-xs leading-relaxed italic">
-          &ldquo;{PERSONA_TAGLINES[persona] ?? "Shop smarter. Save more."}&rdquo;
+        {/* Tier ladder + stats */}
+        <div className="flex items-stretch gap-3 mb-6">
+          <div className="flex-1 rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] p-3">
+            <div className="text-amber-400/70 text-[9px] uppercase tracking-[0.2em] mb-1">Tier</div>
+            <div className="text-amber-300 font-black text-sm leading-tight">{tier.title}</div>
+            <div className="text-amber-400/50 text-[10px] mt-0.5 leading-tight">{tier.sub}</div>
+          </div>
+          <div className="w-[88px] rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
+            <div className="text-zinc-600 text-[9px] uppercase tracking-[0.2em] mb-1">Loots</div>
+            <div className="text-white font-black text-2xl leading-none">{dealsCount}</div>
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-between mt-4 pt-3 border-t border-zinc-900">
-        <span className="text-zinc-700 text-[10px]">loot-eta.vercel.app</span>
-        <span className="text-zinc-700 text-[10px]">Not just a deal. A loot.</span>
+        {/* Best loot */}
+        {bestDeal && bestDeal !== "—" && (
+          <div className="mb-6 rounded-2xl border border-zinc-800/70 bg-zinc-950/60 p-3">
+            <div className="text-zinc-600 text-[9px] uppercase tracking-[0.2em] mb-1">Best loot</div>
+            <div className="text-amber-400 font-bold text-sm leading-tight">{bestDeal}</div>
+          </div>
+        )}
+
+        {/* Tagline */}
+        <div className="text-zinc-400 text-xs leading-relaxed italic mb-5">
+          &ldquo;{tagline}&rdquo;
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-zinc-900 pt-4">
+          <span className="text-zinc-600 text-[10px] font-medium">loot-eta.vercel.app</span>
+          <span className="text-amber-400/60 text-[10px] font-semibold tracking-wide">Not just a deal. A loot.</span>
+        </div>
       </div>
     </div>
   );
@@ -164,6 +251,7 @@ export default function SavingsPage() {
 
   useEffect(() => {
     const p = getProfile();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only localStorage hydration on mount
     setProfile(p);
     const stored = loadDealsFromStorage();
     setDeals(stored);
@@ -220,13 +308,18 @@ export default function SavingsPage() {
     .slice(0, 3);
 
   // URL is appended separately — never include it in the text body
-  // to prevent WhatsApp showing it twice (once in text, once as hyperlink)
+  // to prevent WhatsApp showing it twice (once in text, once as hyperlink).
+  // Emoji-free body: 4-byte surrogate-pair emojis (e.g. 🎯) get mangled to a
+  // replacement character on WhatsApp Desktop when passed via wa.me/?text=.
+  // The OG image carries the visual punch — we don't need an emoji here.
   const buildShareText = useCallback((suffix = "") =>
-    `I found ₹${savings.totalDealsFound.toLocaleString("en-IN")} in deals using Loot 🎯${suffix}\n\nNot just a deal. A loot.`,
+    `I found ₹${(savings.totalDealsFound ?? 0).toLocaleString("en-IN")} in deals using Loot.${suffix}\n\nNot just a deal. A loot.`,
   [savings.totalDealsFound]);
 
   // Build a personalized share URL that generates a custom OG image with user's data
   // e.g. loot-eta.vercel.app/share?savings=7249&loots=2&name=Kartik&persona=value_hunter
+  // Adds a `t=` cache-buster so WhatsApp/X/LinkedIn crawlers fetch the latest OG image
+  // instead of serving a stale preview from a previous share of the same URL.
   const buildPersonalizedUrl = useCallback(() => {
     const base = "https://loot-eta.vercel.app/share";
     const params = new URLSearchParams();
@@ -234,7 +327,8 @@ export default function SavingsPage() {
     if (savings.dealsCount) params.set("loots", String(savings.dealsCount));
     if (name) params.set("name", name);
     if (persona) params.set("persona", persona);
-    if (savings.bestDeal) params.set("best", `₹${savings.bestDeal.saved.toLocaleString("en-IN")} on ${savings.bestDeal.productName.split(" ").slice(0, 3).join(" ")}`);
+    if (savings.bestDeal) params.set("best", `₹${(savings.bestDeal.saved ?? 0).toLocaleString("en-IN")} on ${savings.bestDeal.productName.split(" ").slice(0, 3).join(" ")}`);
+    params.set("t", String(Date.now()));
     return `${base}?${params.toString()}`;
   }, [savings, name, persona]);
 
@@ -246,23 +340,33 @@ export default function SavingsPage() {
     setTimeout(() => setToastMsg(""), 3000);
   }
 
-  // Download the Loot Report card as a PNG image (desktop use case)
+  // Tip Jar: preserve order+payment IDs on verify-failed so user can email support.
+  const [tipRecoveryIds, setTipRecoveryIds] = useState<TipFailure | null>(null);
+  const userEmail = profile.email ?? "";
+
+  // Download the Loot Report card as a PNG. We use html-to-image instead of html2canvas
+  // because Tailwind v4 emits oklch() colors that html2canvas can't parse — every render
+  // failed with a CSS parse error.
   const downloadCard = useCallback(async () => {
     setSharing(true);
     try {
       const cardEl = document.getElementById("loot-report-card");
       if (!cardEl) throw new Error("Card not found");
-      const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(cardEl, { backgroundColor: "#0a0a0a", scale: 2, useCORS: true, logging: false });
-      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png", 0.95));
-      const url = URL.createObjectURL(blob);
+      const { toPng } = await import("html-to-image");
+      const dataUrl = await toPng(cardEl, {
+        backgroundColor: "#0a0a0a",
+        pixelRatio: 2,
+        cacheBust: true,
+      });
       const a = document.createElement("a");
-      a.href = url;
+      a.href = dataUrl;
       a.download = "loot-report.png";
       a.click();
-      URL.revokeObjectURL(url);
       showToast("Card downloaded! Attach it when sharing.");
-    } catch { showToast("Couldn't capture card. Try a screenshot."); }
+    } catch (e) {
+      console.error("[savings] downloadCard failed:", e);
+      showToast("Couldn't capture card. Try a screenshot.");
+    }
     finally { setSharing(false); }
   }, []);
 
@@ -273,6 +377,12 @@ export default function SavingsPage() {
     const siteUrl = "https://loot-eta.vercel.app";
     const text = buildShareText("\n\nI never overpay anymore.");
 
+    track("share_click", {
+      channel: platform ?? "native",
+      savings: savings.totalDealsFound,
+      dealsCount: savings.dealsCount,
+    });
+
     if (platform === "x") {
       // X supports ?text= for the message AND ?url= as a separate card (not in char count)
       // X will show the og:image from the /share URL as a card preview
@@ -282,13 +392,33 @@ export default function SavingsPage() {
       return;
     }
     if (platform === "linkedin") {
-      // LinkedIn share-offsite only accepts url, can't pre-fill text.
-      // Copy text to clipboard first so user can paste it — same spirit as WhatsApp.
+      // LinkedIn's API constraints:
+      //  - share-offsite/?url=… renders the OG card correctly but cannot pre-fill text.
+      //  - feed/?shareActive=true&text=… can pre-fill text but strips query params off
+      //    any URL inside the body (so the OG card collapses to bare /share with ₹0).
+      // We optimise for the OG card (the visual hook) and ask the user to paste the
+      // copied message. Two-step UX: copy → confirm via window.confirm so the user
+      // is unambiguously aware their clipboard is loaded before LinkedIn opens.
       const shareUrl = buildPersonalizedUrl();
       const linkedInText = `${text}\n\n${shareUrl}`;
-      await navigator.clipboard.writeText(linkedInText).catch(() => {});
-      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, "_blank");
-      showToast("Text copied — paste it into your LinkedIn post ✓");
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(linkedInText);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+      const proceed = window.confirm(
+        copied
+          ? "Your Loot Report message is copied.\n\nLinkedIn will open next — paste the message above the preview card with Cmd+V (or Ctrl+V).\n\nClick OK to continue."
+          : "Couldn't copy automatically. Click OK to open LinkedIn, then paste this manually:\n\n" + linkedInText
+      );
+      if (!proceed) return;
+      window.open(
+        `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`,
+        "_blank"
+      );
+      showToast(copied ? "Message ready — paste with Cmd+V on LinkedIn." : "Open LinkedIn and paste your message.");
       return;
     }
     if (platform === "whatsapp") {
@@ -351,7 +481,7 @@ export default function SavingsPage() {
   }
 
   const bestDealLabel = savings.bestDeal
-    ? `₹${savings.bestDeal.saved.toLocaleString("en-IN")} on ${savings.bestDeal.productName.split(" ").slice(0, 3).join(" ")}`
+    ? `₹${(savings.bestDeal.saved ?? 0).toLocaleString("en-IN")} on ${savings.bestDeal.productName.split(" ").slice(0, 3).join(" ")}`
     : "—";
 
   return (
@@ -450,6 +580,84 @@ export default function SavingsPage() {
         </div>
       </div>
 
+      {/* Tip Jar — say thanks, no unlock */}
+      <div className="mb-12 bg-zinc-950 border border-zinc-900 rounded-2xl px-6 py-5">
+        <div className="text-white text-sm font-semibold mb-1">
+          If Loot saved you money, tip the builder?
+        </div>
+        <div className="text-zinc-500 text-xs mb-4">
+          No unlocks. Just gratitude — keeps the lights on.
+        </div>
+
+        {userEmail ? (
+          <div className="grid grid-cols-3 gap-2">
+            {TIP_AMOUNTS.map((t) => (
+              <RazorpayCheckoutButton
+                key={t.paise}
+                kind="tip"
+                email={userEmail}
+                name={profile.name}
+                amountPaise={t.paise}
+                label={t.label}
+                notes="savings-page-tip"
+                className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-400/40 text-white text-sm font-semibold rounded-full px-5 py-2 transition-colors disabled:opacity-60"
+                onSuccess={() => {
+                  console.log("[tip] success", { amountPaise: t.paise });
+                  setTipRecoveryIds(null);
+                }}
+                onFailure={(reason, paymentIds) => {
+                  if (reason === "verify-failed" && paymentIds) {
+                    setTipRecoveryIds(paymentIds);
+                  }
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="text-zinc-600 text-xs italic">
+            Complete onboarding to tip
+          </div>
+        )}
+
+        {tipRecoveryIds && (
+          <div
+            role="alert"
+            className="mt-4 bg-red-500/5 border border-red-500/30 rounded-xl p-4 text-xs relative"
+          >
+            <button
+              type="button"
+              onClick={() => setTipRecoveryIds(null)}
+              aria-label="Dismiss recovery banner"
+              className="absolute top-2 right-2 w-6 h-6 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 flex items-center justify-center text-sm"
+            >
+              ×
+            </button>
+            <div className="text-red-400 font-semibold mb-2 pr-8">
+              Payment received but verification failed.
+            </div>
+            <div className="text-zinc-400 mb-1">
+              You were charged. Save these IDs and email us — we&rsquo;ll sort it out.
+            </div>
+            <div className="font-mono text-zinc-300 break-all mb-1">
+              Order: {tipRecoveryIds.razorpay_order_id}
+            </div>
+            <div className="font-mono text-zinc-300 break-all mb-3">
+              Payment: {tipRecoveryIds.razorpay_payment_id}
+            </div>
+            <a
+              href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+                "Loot tip verification failed"
+              )}&body=${encodeURIComponent(
+                `Order ID: ${tipRecoveryIds.razorpay_order_id}\nPayment ID: ${tipRecoveryIds.razorpay_payment_id}\nEmail: ${userEmail}\n\n(please keep these IDs in your reply)`
+              )}`}
+              className="inline-block text-amber-400 hover:text-amber-300 font-semibold underline underline-offset-2"
+            >
+              Email {SUPPORT_EMAIL} →
+            </a>
+          </div>
+        )}
+      </div>
+
       {/* Deal history */}
       {savings.recent.length > 0 && (
         <div className="mb-8">
@@ -462,8 +670,10 @@ export default function SavingsPage() {
                   <div className="text-zinc-600 text-xs">{deal.platform}</div>
                 </div>
                 <div className="text-right shrink-0 ml-4">
-                  <div className="text-amber-400 font-bold text-sm">
-                    ₹{deal.savedVsHighest.toLocaleString("en-IN")} found
+                  <div className={`font-bold text-sm ${(deal.savedVsHighest ?? 0) > 0 ? "text-amber-400" : "text-zinc-500"}`}>
+                    {(deal.savedVsHighest ?? 0) > 0
+                      ? `₹${(deal.savedVsHighest ?? 0).toLocaleString("en-IN")} found`
+                      : "Tracked · time saved"}
                   </div>
                   {deal.confirmedPurchase && (
                     <div className="text-green-400 text-[10px]">✓ purchased</div>

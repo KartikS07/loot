@@ -17,6 +17,8 @@ export default defineSchema({
     upiPreferences: v.optional(v.array(v.string())),
     totalSaved: v.optional(v.number()),
     searchCount: v.optional(v.number()),
+    premiumTier: v.optional(v.union(v.literal("none"), v.literal("lifetime"))),
+    premiumUnlockedAt: v.optional(v.number()),  // ms epoch when paid
     createdAt: v.number(),
   }).index("by_email", ["email"]),
 
@@ -74,4 +76,20 @@ export default defineSchema({
     sessionId: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_module", ["module"]),
+
+  payments: defineTable({
+    userEmail: v.string(),
+    kind: v.union(v.literal("tip"), v.literal("premium")),
+    amount: v.number(),                          // paise
+    currency: v.literal("INR"),
+    status: v.union(v.literal("created"), v.literal("paid"), v.literal("failed")),
+    razorpayOrderId: v.string(),
+    razorpayPaymentId: v.optional(v.string()),
+    razorpaySignature: v.optional(v.string()),
+    verifiedAt: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_email", ["userEmail"])
+    .index("by_order_id", ["razorpayOrderId"]),
 });

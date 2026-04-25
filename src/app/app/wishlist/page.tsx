@@ -18,18 +18,26 @@ export function loadWishlist(): WishlistItem[] {
   catch { return []; }
 }
 
-export function saveToWishlist(item: Omit<WishlistItem, "id" | "addedAt">) {
+export type SaveResult =
+  | { status: "added" }
+  | { status: "already" }
+  | { status: "full" };
+
+const WISHLIST_CAP = 50;
+
+export function saveToWishlist(item: Omit<WishlistItem, "id" | "addedAt">): SaveResult {
   const existing = loadWishlist();
   const alreadyExists = existing.some(
     (w) => w.productName.toLowerCase() === item.productName.toLowerCase()
   );
-  if (alreadyExists) return false;
+  if (alreadyExists) return { status: "already" };
+  if (existing.length >= WISHLIST_CAP) return { status: "full" };
   const updated = [
     { ...item, id: `wish_${Date.now()}`, addedAt: Date.now() },
     ...existing,
-  ].slice(0, 50);
+  ];
   localStorage.setItem(WISHLIST_KEY, JSON.stringify(updated));
-  return true;
+  return { status: "added" };
 }
 
 export function removeFromWishlist(id: string) {
@@ -70,8 +78,7 @@ export default function WishlistPage() {
         <div className="text-5xl mb-6">📋</div>
         <h1 className="text-2xl font-black mb-3">Your wishlist is empty</h1>
         <p className="text-zinc-500 mb-8 max-w-md mx-auto">
-          Save products from your research results or price comparisons to track them here.
-          Hit the ♡ on any product card to save it.
+          Save products from your research or price results to track them here. Hit the bookmark icon on any product card to save it.
         </p>
         <button
           onClick={() => router.push("/app/research")}

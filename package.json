@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:prices": "npx tsx tests/price_accuracy.test.ts"
+    "test:prices": "npx tsx tests/price_accuracy.test.ts",
+    "test:urls": "npx tsx tests/platform_url_extraction.test.ts",
+    "test:cache": "npx tsx tests/price_cache.test.ts",
+    "test:platforms": "npx tsx tests/platforms.test.ts",
+    "test:url-research": "npx tsx tests/url_research_extraction.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
@@ -16,11 +20,13 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.36.1",
+    "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "lucide-react": "^1.9.0",
     "next": "16.2.4",
     "next-themes": "^0.4.6",
-    "posthog-js": "^1.371.3",
+    "posthog-js": "^1.372.1",
+    "razorpay": "^2.9.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "sonner": "^2.0.7",
