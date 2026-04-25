@@ -61,15 +61,18 @@ Quotes / verbatim feedback: [YOU — capture from Telegram conversation. Probe: 
 
 ## metrics
 
-| Metric | Target | Current (as of 2026-04-25 ~10:00 UTC) |
+| Metric | Target | Current (snapshot 2026-04-26 ~01:48 IST, post-submission) |
 |---|---|---|
-| Waitlist signups | 100 | **5** (Convex prod) |
-| App sessions (first-use events) | 50 | **13** unique sessions, **14** unique users today (PostHog floor — pre-PostHog traffic from yesterday's X post + class drop is uncountable) |
-| Research runs | 30 | **6** (5 by Prateek, 1 by anon) |
-| Price optimizer runs | 30 | **2** (both Prateek) |
+| Waitlist signups | 100 | **5** (Convex prod, source of truth) |
+| App sessions (first-use events) | 50 | **20** unique sessions, **19** unique merged persons (PostHog `dau`; pre-PostHog traffic from Friday's X post + class drop is uncountable) |
+| Research runs | 30 | **10** (Prateek's session + post-submission visitors) |
+| Price optimizer runs | 30 | **3** |
 | Deals logged (Buy clicks) | 20 | **18** total tracked / ₹1,06,053 deals found (Convex; includes pre-decimal-fix entries) |
 | Loot Report shares | 10 | 0 captured by PostHog so far |
 | Revenue (Razorpay) | $0+ | **₹49 captured** (1 paying user — Kartik's own e2e test, real UPI from `kartik.h.sangani@okicici`, payment_id `pay_ShhIGa6M0vGaIb`) |
+
+**Public PostHog dashboard (read-only, no login):** https://us.posthog.com/shared/IANWfXzG1tZDaCgdGD2KuphWqlNo-w
+Tiles: daily unique users, research runs over time, activation funnel (waitlist signup → research run → price drilldown), event volume across all 6 product events. Numbers above are a point-in-time snapshot; the dashboard is the live source of truth.
 
 ---
 
@@ -148,7 +151,7 @@ Quotes / verbatim feedback: [YOU — capture from Telegram conversation. Probe: 
 **Phase 2 priorities (next 4 hours, evidence not features):**
 1. Get Prateek (pkvk.ml@gmail.com) to pay ₹199 — direct Telegram ask. One paying stranger = pain_severity L3 → L4 + a real quote.
 2. Record a 90-second screen capture (onboarding → research → price → savings card → Razorpay). Upload as `demo_video_url`.
-3. Share a PostHog read-only link in the submission. Currently "14 unique users" + "Prateek's 10-min path" are unverifiable claims.
+3. ~~Share a PostHog read-only link in the submission.~~ **DONE 2026-04-26** — public dashboard at https://us.posthog.com/shared/IANWfXzG1tZDaCgdGD2KuphWqlNo-w, 4 tiles, no login required.
 4. Post the savings card with tier escalation on X with a "built in 4 days" hook. The screenshot moment that hasn't been distributed.
 5. Drop the Loot link in the "Extensive Agentic Generation" Telegram channel where Prateek came from.
 6. Add visitor count + PostHog URL to the submission (dual-track: Revenue + Virality).
